@@ -13,6 +13,7 @@ from PIL import Image
 
 from ..svg_verify import SvgArtifactError, verify_svg_artifact
 from .candidate_matrix import CandidateConfig, build_candidate_matrix
+from .geometry_processor import process_svg_geometry
 from .preprocess import preprocess_for_scene
 from .report import RenderMetrics, Vector60Report, write_report
 from .scene_classifier import SceneClassification, classify_scene, validate_scene
@@ -395,7 +396,7 @@ def run_vector60_pipeline(
     candidate_limit: int = 12,
     detail_protection: float = 0.75,
     candidate_generator: CandidateGenerator = generate_vtracer_candidate,
-    geometry_processor: GeometryProcessor = _geometry_passthrough,
+    geometry_processor: GeometryProcessor | None = None,
     svg_optimizer: SvgOptimizer = optimize_with_svgo,
     quality_gates: QualityGates = QualityGates(),
 ) -> Vector60PipelineResult:
@@ -438,6 +439,21 @@ def run_vector60_pipeline(
         prepared_path = staging_dir / ".vector60-source.png"
         preprocessed.image.save(prepared_path, format="PNG")
         scores: list[CandidateScore] = []
+        active_geometry_processor = geometry_processor
+        if active_geometry_processor is None:
+
+            def active_geometry_processor(source_svg: Path, output_svg: Path) -> tuple[str, ...]:
+                return process_svg_geometry(
+                    source_svg,
+                    output_svg,
+                    reference=reference,
+                    staging_dir=staging_dir,
+                    expected_width=expected_width,
+                    expected_height=expected_height,
+                    detail_protection=detail_protection,
+                    quality_gates=quality_gates,
+                )
+
         baseline_render = staging_dir / "candidate-artisan_baseline.png"
         scores.append(
             _safe_score(
@@ -457,7 +473,7 @@ def run_vector60_pipeline(
             render_output = staging_dir / f"candidate-{candidate.candidate_id}.png"
             try:
                 candidate_generator(prepared_path, candidate, generated)
-                geometry_warnings = geometry_processor(generated, geometry_output)
+                geometry_warnings = active_geometry_processor(generated, geometry_output)
                 warnings.extend(geometry_warnings)
                 score = _safe_score(
                     candidate_id=candidate.candidate_id,

@@ -36,6 +36,26 @@ class Vector60PipelineTests(unittest.TestCase):
     def generator(self, _source: Path, _candidate, output: Path) -> None:
         write_solid_svg(output, "#ff0000")
 
+    def redundant_rectangle_generator(self, _source: Path, _candidate, output: Path) -> None:
+        output.write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" '
+            'viewBox="0 0 16 16">'
+            '<path d="M 0 0 L 8 0 L 16 0 L 16 16 L 0 16 Z" fill="#ff0000" '
+            'fill-rule="evenodd" stroke="none"/></svg>\n',
+            encoding="utf-8",
+        )
+
+    def split_rectangle_generator(self, _source: Path, _candidate, output: Path) -> None:
+        output.write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" '
+            'viewBox="0 0 16 16">'
+            '<path d="M 0 0 L 8 0 L 8 16 L 0 16 Z" fill="#ff0000" '
+            'fill-rule="evenodd" stroke="none"/>'
+            '<path d="M 8 0 L 16 0 L 16 16 L 8 16 Z" fill="#ff0000" '
+            'fill-rule="evenodd" stroke="none"/></svg>\n',
+            encoding="utf-8",
+        )
+
     def optimizer(self, source: Path, output: Path) -> None:
         shutil.copyfile(source, output)
 
@@ -62,6 +82,40 @@ class Vector60PipelineTests(unittest.TestCase):
         report_text = (self.root / "vector60_report.json").read_text(encoding="utf-8")
         self.assertNotIn(str(self.root), report_text)
         self.assertEqual(json.loads(report_text)["candidate_count"], 2)
+
+    def test_default_geometry_processor_uses_render_gated_primitive_fit(self) -> None:
+        result = run_vector60_pipeline(
+            reference=self.reference,
+            candidate_source=self.reference,
+            baseline_svg=self.baseline,
+            staging_dir=self.root,
+            scene_preset="logo",
+            candidate_limit=2,
+            candidate_generator=self.redundant_rectangle_generator,
+            svg_optimizer=self.optimizer,
+        )
+
+        self.assertFalse(result.fallback_used)
+        self.assertEqual(result.score.complexity.anchors, 4)
+        self.assertNotIn("primitive_fit.no_safe_proposal", result.report.warning_codes)
+        self.assertIn("seam_repair.no_safe_proposal", result.report.warning_codes)
+
+    def test_default_geometry_processor_unions_same_color_siblings_after_render(self) -> None:
+        result = run_vector60_pipeline(
+            reference=self.reference,
+            candidate_source=self.reference,
+            baseline_svg=self.baseline,
+            staging_dir=self.root,
+            scene_preset="flat",
+            candidate_limit=2,
+            candidate_generator=self.split_rectangle_generator,
+            svg_optimizer=self.optimizer,
+        )
+
+        self.assertFalse(result.fallback_used)
+        self.assertEqual(result.score.complexity.subpaths, 1)
+        self.assertLessEqual(result.score.complexity.anchors, 4)
+        self.assertNotIn("seam_repair.no_safe_proposal", result.report.warning_codes)
 
     def test_unsupported_photo_uses_only_artisan_baseline(self) -> None:
         generator = mock.Mock(side_effect=AssertionError("must not generate"))
