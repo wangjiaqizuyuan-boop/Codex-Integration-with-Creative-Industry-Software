@@ -7,6 +7,15 @@ from dataclasses import dataclass
 from enum import Enum
 from itertools import combinations
 
+from .geometry_backend import (
+    BooleanOperation,
+    GeometryDependencyUnavailable,
+    analyze_path,
+    geometry_dependencies_available,
+    parse_safe_path,
+    pathops_boolean,
+    replace_endpoints,
+)
 from .primitive_fit import TopologySignature
 
 MAXIMUM_VERTEX_SNAP_PX = 0.8
@@ -27,6 +36,7 @@ class RegionSnapshot:
     region_id: str
     fill: str
     topology: TopologySignature
+    path_data: str = ""
 
 
 @dataclass(frozen=True)
@@ -37,6 +47,7 @@ class SeamRepairProposal:
     snap_distance_px: float = 0.0
     overlap_px: float = 0.0
     bottom_region_id: str | None = None
+    overlap_patch_path_data: str | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +57,7 @@ class RepairCandidate:
     path_data_by_region: Mapping[str, str]
     topology_by_region: Mapping[str, TopologySignature]
     affected_region_ids: tuple[str, ...]
+    removed_region_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -159,13 +171,37 @@ def color_delta_e(first: str, second: str) -> float:
     return math.sqrt(sum((left - right) ** 2 for left, right in zip(first_lab, second_lab)))
 
 
-def _topology_unchanged(regions: Mapping[str, RegionSnapshot], candidate: RepairCandidate) -> bool:
-    if set(candidate.topology_by_region) != set(regions):
+def _topology_unchanged(
+    regions: Mapping[str, RegionSnapshot], candidate: RepairCandidate, operation: SeamOperation
+) -> bool:
+    removed = set(candidate.removed_region_ids)
+    if operation is not SeamOperation.UNION and removed:
         return False
-    return all(
+    if removed - set(regions) or set(candidate.topology_by_region) != set(regions) - removed:
+        return False
+    unchanged = all(
         topology.is_valid() and topology == regions[region_id].topology
         for region_id, topology in candidate.topology_by_region.items()
     )
+    if not unchanged:
+        return False
+    if removed:
+        survivors = set(candidate.path_data_by_region)
+        if len(survivors) != 1:
+            return False
+        survivor = regions[next(iter(survivors))]
+        # Production union is limited to sibling, hole-free, single-contour
+        # regions. This preserves every parent and hole relationship.
+        return all(
+            region.topology.closed
+            and region.topology.subpaths == 1
+            and region.topology.holes == 0
+            and region.topology.parent_ids == survivor.topology.parent_ids
+            and region.topology.winding == survivor.topology.winding
+            for region_id, region in regions.items()
+            if region_id in removed | survivors
+        )
+    return True
 
 
 def _finite_in_range(value: object, minimum: float, maximum: float) -> bool:
@@ -184,13 +220,174 @@ def _candidate_scope(
     involved_regions: set[str],
 ) -> bool:
     changed_regions = set(candidate.affected_region_ids)
-    if changed_regions != set(candidate.path_data_by_region):
+    output_regions = set(candidate.path_data_by_region)
+    removed_regions = set(candidate.removed_region_ids)
+    if output_regions & removed_regions:
         return False
     if operation is SeamOperation.SAFE_OVERLAP:
-        return changed_regions == {proposal.bottom_region_id}
+        return (
+            changed_regions == output_regions == {proposal.bottom_region_id} and not removed_regions
+        )
     if operation is SeamOperation.SNAP:
-        return bool(changed_regions) and changed_regions <= involved_regions
-    return changed_regions == involved_regions
+        return (
+            bool(changed_regions)
+            and changed_regions == output_regions
+            and changed_regions <= involved_regions
+            and not removed_regions
+        )
+    return (
+        changed_regions == involved_regions and output_regions | removed_regions == involved_regions
+    )
+
+
+def _path_vertices(path_data: str) -> tuple[complex, ...]:
+    parsed = parse_safe_path(path_data)
+    vertices: list[complex] = []
+    for segment in parsed:
+        for point in (segment.start, segment.end):
+            if not any(abs(point - existing) <= 1e-9 for existing in vertices):
+                vertices.append(point)
+    return tuple(vertices)
+
+
+def _analysis_matches_topology(path_data: str, topology: TopologySignature) -> bool:
+    analysis = analyze_path(path_data)
+    return (
+        analysis.closed == topology.closed
+        and analysis.subpaths == topology.subpaths
+        and (not analysis.closed or analysis.winding == topology.winding)
+    )
+
+
+def _build_snap_candidate(
+    regions: Mapping[str, RegionSnapshot], proposal: SeamRepairProposal
+) -> RepairCandidate:
+    region_ids = tuple(dict.fromkeys(proposal.region_ids))
+    vertices = {region_id: _path_vertices(regions[region_id].path_data) for region_id in region_ids}
+    choices: list[tuple[float, str, complex, str, complex]] = []
+    for first_index, first_id in enumerate(region_ids):
+        for second_index in range(first_index, len(region_ids)):
+            second_id = region_ids[second_index]
+            for first_point in vertices[first_id]:
+                for second_point in vertices[second_id]:
+                    if first_id == second_id and abs(first_point - second_point) <= 1e-9:
+                        continue
+                    distance = abs(first_point - second_point)
+                    if 1e-9 < distance <= proposal.snap_distance_px:
+                        choices.append((distance, first_id, first_point, second_id, second_point))
+    if not choices:
+        raise ValueError("no local vertices satisfy the snap limit")
+    _, first_id, first_point, second_id, second_point = min(
+        choices, key=lambda item: (item[0], item[1], item[2].real, item[2].imag, item[3])
+    )
+    target = (first_point + second_point) / 2
+    replacements: dict[str, list[tuple[complex, complex]]] = {first_id: [(first_point, target)]}
+    replacements.setdefault(second_id, []).append((second_point, target))
+    changed = tuple(sorted(replacements))
+    repaired = {
+        region_id: replace_endpoints(regions[region_id].path_data, tuple(items))
+        for region_id, items in replacements.items()
+    }
+    if not all(
+        _analysis_matches_topology(path_data, regions[region_id].topology)
+        for region_id, path_data in repaired.items()
+    ):
+        raise ValueError("snap would change path topology")
+    return RepairCandidate(
+        path_data_by_region=repaired,
+        topology_by_region={key: value.topology for key, value in regions.items()},
+        affected_region_ids=changed,
+    )
+
+
+def _build_union_candidate(
+    regions: Mapping[str, RegionSnapshot], proposal: SeamRepairProposal
+) -> RepairCandidate:
+    region_ids = tuple(dict.fromkeys(proposal.region_ids))
+    survivor = region_ids[0]
+    merged = pathops_boolean(
+        BooleanOperation.UNION, tuple(regions[region_id].path_data for region_id in region_ids)
+    )
+    analysis = analyze_path(merged)
+    if (
+        not analysis.closed
+        or analysis.subpaths != 1
+        or analysis.winding != regions[survivor].topology.winding
+    ):
+        raise ValueError("union would change component or hole topology")
+    removed = tuple(region_ids[1:])
+    return RepairCandidate(
+        path_data_by_region={survivor: merged},
+        topology_by_region={
+            key: value.topology for key, value in regions.items() if key not in removed
+        },
+        affected_region_ids=region_ids,
+        removed_region_ids=removed,
+    )
+
+
+def _build_overlap_candidate(
+    regions: Mapping[str, RegionSnapshot], proposal: SeamRepairProposal
+) -> RepairCandidate:
+    bottom_id = proposal.bottom_region_id
+    patch = proposal.overlap_patch_path_data
+    if bottom_id is None or not patch:
+        raise ValueError("safe overlap requires an explicit local patch")
+    patch_analysis = analyze_path(patch)
+    if not patch_analysis.closed or patch_analysis.subpaths != 1:
+        raise ValueError("overlap patch topology is unsafe")
+    xmin, ymin, xmax, ymax = patch_analysis.bounds
+    if min(xmax - xmin, ymax - ymin) > proposal.overlap_px + 1e-9:
+        raise ValueError("overlap patch exceeds the local thickness limit")
+    bottom_path = regions[bottom_id].path_data
+    # Both calls are evidence: the patch must overlap the bottom and must also
+    # extend beyond it. This prevents a no-op or a whole-shape dilation.
+    pathops_boolean(BooleanOperation.INTERSECTION, (bottom_path, patch))
+    pathops_boolean(BooleanOperation.DIFFERENCE, (patch, bottom_path))
+    merged = pathops_boolean(BooleanOperation.UNION, (bottom_path, patch))
+    analysis = analyze_path(merged)
+    if (
+        not analysis.closed
+        or analysis.subpaths != regions[bottom_id].topology.subpaths
+        or analysis.winding != regions[bottom_id].topology.winding
+    ):
+        raise ValueError("overlap patch would change topology")
+    return RepairCandidate(
+        path_data_by_region={bottom_id: merged},
+        topology_by_region={key: value.topology for key, value in regions.items()},
+        affected_region_ids=(bottom_id,),
+    )
+
+
+def make_pathops_candidate_builder(
+    regions: Mapping[str, RegionSnapshot],
+) -> CandidateBuilder:
+    """Create a fail-closed production builder backed by pinned skia-pathops.
+
+    The returned builder never renders or approves its own output. Approval
+    remains in ``apply_seam_repair`` and requires original-resolution metrics.
+    """
+
+    snapshots = dict(regions)
+
+    def build(proposal: SeamRepairProposal) -> RepairCandidate:
+        if not geometry_dependencies_available():
+            raise GeometryDependencyUnavailable("Vector60 geometry extra is unavailable")
+        if not snapshots or any(not region.path_data for region in snapshots.values()):
+            raise ValueError("region path data is unavailable")
+        if not all(
+            _analysis_matches_topology(region.path_data, region.topology)
+            for region in snapshots.values()
+        ):
+            raise ValueError("region path topology does not match its evidence")
+        operation = SeamOperation(proposal.operation)
+        if operation is SeamOperation.SNAP:
+            return _build_snap_candidate(snapshots, proposal)
+        if operation is SeamOperation.UNION:
+            return _build_union_candidate(snapshots, proposal)
+        return _build_overlap_candidate(snapshots, proposal)
+
+    return build
 
 
 def _result(
@@ -262,6 +459,7 @@ def apply_seam_repair(
             )
             and proposal.overlap_px == 0
             and proposal.bottom_region_id is None
+            and proposal.overlap_patch_path_data is None
         )
         gates["color"] = True
     elif operation is SeamOperation.UNION:
@@ -270,6 +468,7 @@ def apply_seam_repair(
             and proposal.snap_distance_px == 0
             and proposal.overlap_px == 0
             and proposal.bottom_region_id is None
+            and proposal.overlap_patch_path_data is None
             and limits_valid
         )
         if known_regions:
@@ -332,7 +531,7 @@ def apply_seam_repair(
     if not gates["safe_path_data"]:
         reasons.append("unsafe_path_data")
     try:
-        gates["topology"] = _topology_unchanged(regions, candidate)
+        gates["topology"] = _topology_unchanged(regions, candidate, operation)
     except (AttributeError, KeyError, TypeError):
         gates["topology"] = False
     if not gates["topology"]:

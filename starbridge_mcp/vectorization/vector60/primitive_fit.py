@@ -6,6 +6,14 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 
+from .geometry_backend import (
+    analyze_path,
+    geometry_dependencies_available,
+    has_self_intersections,
+    parse_safe_path,
+    sampled_contour_error,
+)
+
 
 class PrimitiveKind(str, Enum):
     """Vector60 primitives that may replace an existing path."""
@@ -117,6 +125,282 @@ class PrimitiveFitResult:
 
 
 RenderGate = Callable[[str], FinalRenderEvidence]
+
+
+_KAPPA = 0.5522847498307936
+
+
+def _number(value: float) -> str:
+    if not math.isfinite(value):
+        raise ValueError("non-finite primitive coordinate")
+    if abs(value) < 1e-9:
+        value = 0.0
+    return f"{value:.6f}".rstrip("0").rstrip(".") or "0"
+
+
+def _point(value: complex) -> str:
+    return f"{_number(value.real)} {_number(value.imag)}"
+
+
+def _rectangle_path(xmin: float, ymin: float, xmax: float, ymax: float) -> str:
+    return (
+        f"M {_number(xmin)} {_number(ymin)} L {_number(xmax)} {_number(ymin)} "
+        f"L {_number(xmax)} {_number(ymax)} L {_number(xmin)} {_number(ymax)} Z"
+    )
+
+
+def _ellipse_path(xmin: float, ymin: float, xmax: float, ymax: float) -> str:
+    center_x = (xmin + xmax) / 2
+    center_y = (ymin + ymax) / 2
+    radius_x = (xmax - xmin) / 2
+    radius_y = (ymax - ymin) / 2
+    control_x = radius_x * _KAPPA
+    control_y = radius_y * _KAPPA
+    return (
+        f"M {_number(center_x + radius_x)} {_number(center_y)} "
+        f"C {_number(center_x + radius_x)} {_number(center_y + control_y)} "
+        f"{_number(center_x + control_x)} {_number(center_y + radius_y)} "
+        f"{_number(center_x)} {_number(center_y + radius_y)} "
+        f"C {_number(center_x - control_x)} {_number(center_y + radius_y)} "
+        f"{_number(center_x - radius_x)} {_number(center_y + control_y)} "
+        f"{_number(center_x - radius_x)} {_number(center_y)} "
+        f"C {_number(center_x - radius_x)} {_number(center_y - control_y)} "
+        f"{_number(center_x - control_x)} {_number(center_y - radius_y)} "
+        f"{_number(center_x)} {_number(center_y - radius_y)} "
+        f"C {_number(center_x + control_x)} {_number(center_y - radius_y)} "
+        f"{_number(center_x + radius_x)} {_number(center_y - control_y)} "
+        f"{_number(center_x + radius_x)} {_number(center_y)} Z"
+    )
+
+
+def _rounded_rectangle_path(
+    xmin: float, ymin: float, xmax: float, ymax: float, radius: float
+) -> str:
+    radius = min(radius, (xmax - xmin) / 2, (ymax - ymin) / 2)
+    control = radius * _KAPPA
+    return (
+        f"M {_number(xmin + radius)} {_number(ymin)} "
+        f"L {_number(xmax - radius)} {_number(ymin)} "
+        f"C {_number(xmax - radius + control)} {_number(ymin)} "
+        f"{_number(xmax)} {_number(ymin + radius - control)} "
+        f"{_number(xmax)} {_number(ymin + radius)} "
+        f"L {_number(xmax)} {_number(ymax - radius)} "
+        f"C {_number(xmax)} {_number(ymax - radius + control)} "
+        f"{_number(xmax - radius + control)} {_number(ymax)} "
+        f"{_number(xmax - radius)} {_number(ymax)} "
+        f"L {_number(xmin + radius)} {_number(ymax)} "
+        f"C {_number(xmin + radius - control)} {_number(ymax)} "
+        f"{_number(xmin)} {_number(ymax - radius + control)} "
+        f"{_number(xmin)} {_number(ymax - radius)} "
+        f"L {_number(xmin)} {_number(ymin + radius)} "
+        f"C {_number(xmin)} {_number(ymin + radius - control)} "
+        f"{_number(xmin + radius - control)} {_number(ymin)} "
+        f"{_number(xmin + radius)} {_number(ymin)} Z"
+    )
+
+
+def _regular_polygon_path(vertices: tuple[complex, ...]) -> str | None:
+    if not 3 <= len(vertices) <= 12:
+        return None
+    center = sum(vertices) / len(vertices)
+    radii = tuple(abs(vertex - center) for vertex in vertices)
+    sides = tuple(
+        abs(vertices[(index + 1) % len(vertices)] - vertex) for index, vertex in enumerate(vertices)
+    )
+    average_radius = sum(radii) / len(radii)
+    average_side = sum(sides) / len(sides)
+    if average_radius <= 0 or average_side <= 0:
+        return None
+    if max(abs(radius - average_radius) for radius in radii) > average_radius * 0.05:
+        return None
+    if max(abs(side - average_side) for side in sides) > average_side * 0.05:
+        return None
+    phase = math.atan2((vertices[0] - center).imag, (vertices[0] - center).real)
+    fitted = tuple(
+        center
+        + average_radius
+        * complex(
+            math.cos(phase + index * math.tau / len(vertices)),
+            math.sin(phase + index * math.tau / len(vertices)),
+        )
+        for index in range(len(vertices))
+    )
+    return (
+        f"M {_point(fitted[0])} " + " ".join(f"L {_point(vertex)}" for vertex in fitted[1:]) + " Z"
+    )
+
+
+def _rounded_radius(parsed, bounds: tuple[float, float, float, float]) -> float | None:
+    xmin, ymin, xmax, ymax = bounds
+    offsets: list[float] = []
+    for segment in parsed:
+        for point in (segment.start, segment.end):
+            if abs(point.imag - ymin) <= 1e-6 or abs(point.imag - ymax) <= 1e-6:
+                offsets.extend((point.real - xmin, xmax - point.real))
+            if abs(point.real - xmin) <= 1e-6 or abs(point.real - xmax) <= 1e-6:
+                offsets.extend((point.imag - ymin, ymax - point.imag))
+    maximum = min(xmax - xmin, ymax - ymin) / 2
+    usable = tuple(offset for offset in offsets if 1e-6 < offset < maximum - 1e-6)
+    return min(usable) if usable else None
+
+
+def _area_error(original_path_data: str, candidate_path_data: str) -> float:
+    original_area = analyze_path(original_path_data).area
+    candidate_area = analyze_path(candidate_path_data).area
+    if original_area <= 1e-9:
+        return 0.0 if candidate_area <= 1e-9 else math.inf
+    return float(abs(candidate_area - original_area) / original_area)
+
+
+def _proposal(
+    *,
+    kind: PrimitiveKind,
+    original_path_data: str,
+    candidate_path_data: str,
+    topology: TopologySignature,
+    sample_count: int,
+) -> PrimitiveProposal:
+    return PrimitiveProposal(
+        kind=kind,
+        path_data=candidate_path_data,
+        contour_error_px=sampled_contour_error(
+            original_path_data, candidate_path_data, sample_count=sample_count
+        ),
+        area_error_ratio=_area_error(original_path_data, candidate_path_data),
+        topology=topology,
+    )
+
+
+def generate_primitive_proposals(
+    *,
+    original_path_data: str,
+    original_topology: TopologySignature,
+    sample_count: int = 128,
+) -> tuple[PrimitiveProposal, ...]:
+    """Fit audited primitives with svgpathtools, returning no proposal on uncertainty.
+
+    These are geometry proposals only. ``apply_primitive_fit`` still requires
+    contour, area, topology, and original-resolution render evidence before a
+    proposal can replace the source path.
+    """
+
+    if (
+        not geometry_dependencies_available()
+        or not isinstance(original_topology, TopologySignature)
+        or not original_topology.is_valid()
+    ):
+        return ()
+    try:
+        parsed = parse_safe_path(original_path_data)
+        analysis = analyze_path(original_path_data)
+        if analysis.subpaths != 1 or has_self_intersections(original_path_data):
+            return ()
+        if analysis.closed != original_topology.closed:
+            return ()
+        xmin, ymin, xmax, ymax = analysis.bounds
+        if xmax - xmin <= 1e-9 or ymax - ymin <= 1e-9:
+            if original_topology.closed:
+                return ()
+        candidates: list[tuple[PrimitiveKind, str]] = []
+        if not original_topology.closed:
+            candidates.append(
+                (PrimitiveKind.LINE, f"M {_point(parsed[0].start)} L {_point(parsed[-1].end)}")
+            )
+        else:
+            candidates.append((PrimitiveKind.RECTANGLE, _rectangle_path(xmin, ymin, xmax, ymax)))
+            # Axis-boundary endpoints expose the corner radius without trusting
+            # path metadata. It is merely a proposal; all four gates remain
+            # authoritative.
+            radius = _rounded_radius(parsed, analysis.bounds)
+            if radius is not None:
+                candidates.append(
+                    (
+                        PrimitiveKind.ROUNDED_RECTANGLE,
+                        _rounded_rectangle_path(xmin, ymin, xmax, ymax, radius),
+                    )
+                )
+            ellipse = _ellipse_path(xmin, ymin, xmax, ymax)
+            candidates.append((PrimitiveKind.ELLIPSE, ellipse))
+            if abs((xmax - xmin) - (ymax - ymin)) <= max(xmax - xmin, ymax - ymin) * 0.01:
+                candidates.append((PrimitiveKind.CIRCLE, ellipse))
+            if all(segment.__class__.__name__ == "Line" for segment in parsed):
+                vertices = tuple(segment.start for segment in parsed)
+                polygon = _regular_polygon_path(vertices)
+                if polygon is not None:
+                    candidates.append((PrimitiveKind.REGULAR_POLYGON, polygon))
+        proposals = tuple(
+            _proposal(
+                kind=kind,
+                original_path_data=original_path_data,
+                candidate_path_data=path_data,
+                topology=original_topology,
+                sample_count=sample_count,
+            )
+            for kind, path_data in candidates
+        )
+    except (ArithmeticError, AttributeError, TypeError, ValueError):
+        return ()
+    return tuple(
+        proposal
+        for proposal in proposals
+        if _finite_nonnegative(proposal.contour_error_px)
+        and _finite_nonnegative(proposal.area_error_ratio)
+    )
+
+
+def fit_best_primitive(
+    *,
+    original_path_data: str,
+    original_topology: TopologySignature,
+    render_gate: RenderGate | None,
+    limits: PrimitiveFitLimits = PrimitiveFitLimits(),
+    sample_count: int = 128,
+) -> PrimitiveFitResult:
+    """Try fitted proposals in measured-error order and otherwise pass through."""
+
+    proposals = generate_primitive_proposals(
+        original_path_data=original_path_data,
+        original_topology=original_topology,
+        sample_count=sample_count,
+    )
+    ordered = sorted(
+        proposals,
+        key=lambda item: (item.contour_error_px, item.area_error_ratio, item.kind.value),
+    )
+    last_result: PrimitiveFitResult | None = None
+    for proposal in ordered:
+        result = apply_primitive_fit(
+            original_path_data=original_path_data,
+            original_topology=original_topology,
+            proposal=proposal,
+            render_gate=render_gate,
+            limits=limits,
+        )
+        if result.replaced:
+            return result
+        last_result = result
+    if last_result is not None:
+        return PrimitiveFitResult(
+            original_path_data,
+            False,
+            None,
+            last_result.gates,
+            ("no_primitive_passed",),
+        )
+    return PrimitiveFitResult(
+        original_path_data,
+        False,
+        None,
+        {
+            "supported_primitive": False,
+            "safe_path_data": False,
+            "contour_error": False,
+            "area_error": False,
+            "topology": False,
+            "final_render": False,
+        },
+        ("geometry_backend_unavailable_or_no_safe_proposal",),
+    )
 
 
 def _safe_path_data(path_data: str, topology: TopologySignature) -> bool:
