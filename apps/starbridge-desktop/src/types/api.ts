@@ -180,7 +180,7 @@ export interface LicenseRequestReceipt {
   folderOpened: boolean;
 }
 
-export type VectorMode = "artisan" | "smart" | "lightweight" | "exact" | "editable-99";
+export type VectorMode = "artisan" | "smart" | "lightweight" | "exact";
 export type VectorJobState = "queued" | "running" | "completed" | "failed";
 export type Editable99Status =
   | "passed_editable_99"

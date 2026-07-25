@@ -129,8 +129,7 @@ export function VectorizationPage({
             </div></div>
           </div>
           <div className="workflow-step">
-              <span className="step-number">3</span><div className="step-content"><h3>确认参数并执行</h3><div className="parameter-row"><label>目标颜色<input type="number" min="2" max="32" value={colors} disabled={mode === "exact" || mode === "editable-99"} onChange={(event) => setColors(Number(event.currentTarget.value))} /></label><label>最大边长<input type="number" min="256" max="8192" step="128" value={maxDimension} onChange={(event) => setMaxDimension(Number(event.currentTarget.value))} /></label></div>
-              {mode === "editable-99" ? <p className="saved-note">固定搜索 256、192、160、128、96、80、64、48、32 色；SSIM、difference、MAE、边缘 Dice 与 alpha MAE 必须全部通过。</p> : null}
+              <span className="step-number">3</span><div className="step-content"><h3>确认参数并执行</h3><div className="parameter-row"><label>目标颜色<input type="number" min="2" max="32" value={colors} disabled={mode === "exact"} onChange={(event) => setColors(Number(event.currentTarget.value))} /></label><label>最大边长<input type="number" min="256" max="8192" step="128" value={maxDimension} onChange={(event) => setMaxDimension(Number(event.currentTarget.value))} /></label></div>
               <label className="confirmation"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.currentTarget.checked)} /><span>确认在 KORYAO 应用数据目录执行、写入并导出本次结果。</span></label>
               <button type="button" className="primary" disabled={!runtimeReady || !codexConnected || !selection || busy || running} onClick={() => void run()}>{running ? "正在本机处理" : "开始本机矢量化"}</button>
             </div>
