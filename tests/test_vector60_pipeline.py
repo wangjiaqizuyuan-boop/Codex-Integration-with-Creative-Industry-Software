@@ -9,6 +9,10 @@ from unittest import mock
 
 from PIL import Image
 
+from starbridge_mcp.vectorization.vector60 import geometry_processor
+from starbridge_mcp.vectorization.vector60.geometry_backend import (
+    geometry_dependencies_available,
+)
 from starbridge_mcp.vectorization.vector60.pipeline import run_vector60_pipeline
 
 
@@ -83,6 +87,7 @@ class Vector60PipelineTests(unittest.TestCase):
         self.assertNotIn(str(self.root), report_text)
         self.assertEqual(json.loads(report_text)["candidate_count"], 2)
 
+    @unittest.skipUnless(geometry_dependencies_available(), "Vector60 geometry extra unavailable")
     def test_default_geometry_processor_uses_render_gated_primitive_fit(self) -> None:
         result = run_vector60_pipeline(
             reference=self.reference,
@@ -100,6 +105,7 @@ class Vector60PipelineTests(unittest.TestCase):
         self.assertNotIn("primitive_fit.no_safe_proposal", result.report.warning_codes)
         self.assertIn("seam_repair.no_safe_proposal", result.report.warning_codes)
 
+    @unittest.skipUnless(geometry_dependencies_available(), "Vector60 geometry extra unavailable")
     def test_default_geometry_processor_unions_same_color_siblings_after_render(self) -> None:
         result = run_vector60_pipeline(
             reference=self.reference,
@@ -116,6 +122,26 @@ class Vector60PipelineTests(unittest.TestCase):
         self.assertEqual(result.score.complexity.subpaths, 1)
         self.assertLessEqual(result.score.complexity.anchors, 4)
         self.assertNotIn("seam_repair.no_safe_proposal", result.report.warning_codes)
+
+    def test_missing_geometry_extra_retains_the_rendered_candidate(self) -> None:
+        with mock.patch.object(
+            geometry_processor, "geometry_dependencies_available", return_value=False
+        ):
+            result = run_vector60_pipeline(
+                reference=self.reference,
+                candidate_source=self.reference,
+                baseline_svg=self.baseline,
+                staging_dir=self.root,
+                scene_preset="logo",
+                candidate_limit=2,
+                candidate_generator=self.redundant_rectangle_generator,
+                svg_optimizer=self.optimizer,
+            )
+
+        self.assertFalse(result.fallback_used)
+        self.assertEqual(result.score.complexity.anchors, 5)
+        self.assertIn("primitive_fit.no_safe_proposal", result.report.warning_codes)
+        self.assertIn("seam_repair.no_safe_proposal", result.report.warning_codes)
 
     def test_unsupported_photo_uses_only_artisan_baseline(self) -> None:
         generator = mock.Mock(side_effect=AssertionError("must not generate"))

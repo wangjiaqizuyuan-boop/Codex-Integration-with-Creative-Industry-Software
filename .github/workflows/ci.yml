@@ -204,6 +204,12 @@ jobs:
           actual={name:m.version(name) for name in expected}; assert actual == expected, (expected, actual);
           print(actual)"
 
+      - name: Run Vector60 geometry integration tests
+        run: >-
+          python -m unittest
+          tests.test_vector60_geometry_backend
+          tests.test_vector60_pipeline
+
       - name: Verify locked SVGO CLI
         shell: pwsh
         run: |
