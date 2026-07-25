@@ -428,6 +428,9 @@ def _run_case(
                 scene_preset=_CATEGORY_SCENES[case.category],
             )
         )
+        vector60 = enhanced_result.get("vector60")
+        if not isinstance(vector60, Mapping) or vector60.get("status") != "selected":
+            raise BenchmarkRunnerError("enhancement_not_selected")
         enhanced_width, enhanced_height = _result_dimensions(enhanced_result)
         _safe_svg(verifier, enhanced_svg, enhanced_width, enhanced_height)
         enhanced_metrics = scorer(
@@ -437,8 +440,6 @@ def _run_case(
             enhanced_width,
             enhanced_height,
         )
-        vector60 = enhanced_result.get("vector60")
-        fallback_used = not isinstance(vector60, Mapping) or vector60.get("status") != "selected"
     except Exception:
         fallback_used = True
         enhanced_svg = baseline_svg

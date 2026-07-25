@@ -48,9 +48,15 @@ def write_dataset(root: Path, *, missing_id: str | None = None) -> Path:
 
 
 class FakeRuntime:
-    def __init__(self, *, fail_enhanced: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_enhanced: bool = False,
+        enhanced_status: str = "selected",
+    ) -> None:
         self.configs = []
         self.fail_enhanced = fail_enhanced
+        self.enhanced_status = enhanced_status
 
     def vectorize(self, config):
         self.configs.append(config)
@@ -65,7 +71,7 @@ class FakeRuntime:
         )
         result = {"vector": {"width": 4, "height": 3}}
         if config.auto_enhance:
-            result["vector60"] = {"status": "selected"}
+            result["vector60"] = {"status": self.enhanced_status}
         return result
 
     @staticmethod
@@ -234,6 +240,36 @@ class Vector60BenchmarkRunnerTests(unittest.TestCase):
             serialized = (output / "summary.json").read_text(encoding="utf-8")
             self.assertNotIn(str(root), serialized)
             self.assertNotIn("private failure", serialized)
+
+    def test_non_selected_enhancement_is_replaced_by_artisan_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = write_dataset(root)
+            output = root / "output"
+            runtime = FakeRuntime(enhanced_status="artisan_baseline_fallback")
+
+            result = run_benchmark(
+                manifest,
+                output,
+                vectorizer=runtime.vectorize,
+                scorer=runtime.score,
+                verifier=runtime.verify,
+            )
+
+            self.assertEqual(result["fallback_count"], 40)
+            baseline = output / "artifacts" / "flat" / "flat-01" / "artisan_baseline.svg"
+            enhanced = output / "artifacts" / "flat" / "flat-01" / "auto_enhance.svg"
+            self.assertEqual(baseline.read_bytes(), enhanced.read_bytes())
+            metrics = next(
+                case["metrics"] for case in result["cases"] if case["case_id"] == "flat-01"
+            )
+            self.assertEqual(metrics["ssim"], metrics["artisan_baseline_ssim"])
+            self.assertEqual(
+                metrics["normalized_mae"],
+                metrics["artisan_baseline_normalized_mae"],
+            )
+            self.assertEqual(metrics["edge_dice"], metrics["artisan_baseline_edge_dice"])
+            self.assertEqual(metrics["anchor_count"], metrics["artisan_baseline_anchor_count"])
 
     def test_sources_below_output_root_are_never_overwritten(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
