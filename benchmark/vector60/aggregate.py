@@ -25,15 +25,24 @@ EXPECTED_CASE_IDS = frozenset(
 )
 
 _ROOT_KEYS = frozenset({"schema_version", "cases", "exact_validation", "test_suites"})
-_CASE_KEYS = frozenset({"case_id", "category", "status", "metrics"})
+_CASE_KEYS = frozenset({"case_id", "category", "status", "fallback_used", "metrics"})
 _METRIC_KEYS = frozenset(
     {
+        "ssim",
+        "artisan_baseline_ssim",
         "edge_dice",
         "artisan_baseline_edge_dice",
         "normalized_mae",
+        "artisan_baseline_normalized_mae",
         "seam_free_4x",
         "anchor_count",
         "artisan_baseline_anchor_count",
+        "subpath_count",
+        "artisan_baseline_subpath_count",
+        "svg_bytes",
+        "artisan_baseline_svg_bytes",
+        "elapsed_seconds",
+        "artisan_baseline_elapsed_seconds",
         "safe_svg",
     }
 )
@@ -50,7 +59,7 @@ _GATE_ORDER = (
     "exact_pixel_validation",
     "test_suites",
 )
-_COMPARISON_REF_RE = re.compile(r"\Acomparisons/[a-z_]+/[a-z0-9_-]+\.png\Z")
+_ANONYMOUS_CASE_ID_RE = re.compile(r"\A[a-z_]+-\d{2}\Z")
 
 
 class SummaryValidationError(ValueError):
@@ -85,6 +94,15 @@ def _nonnegative_integer(value: Any, code: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise SummaryValidationError(code)
     return value
+
+
+def _nonnegative_number(value: Any, code: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SummaryValidationError(code)
+    result = float(value)
+    if not math.isfinite(result) or result < 0:
+        raise SummaryValidationError(code)
+    return result
 
 
 def _optional_bool(value: Any, code: str) -> bool:
@@ -136,10 +154,22 @@ def validate_summary(document: Any) -> dict[str, Any]:
             "category": category,
             "status": status,
         }
+        if "fallback_used" in case:
+            normalized["fallback_used"] = _optional_bool(
+                case["fallback_used"], "invalid_fallback_used"
+            )
         if "metrics" in case:
             metrics = _require_mapping(case["metrics"], "metrics_must_be_object")
             _reject_unknown_keys(metrics, _METRIC_KEYS)
             clean_metrics: dict[str, Any] = {}
+            for key in ("ssim", "artisan_baseline_ssim"):
+                if key in metrics:
+                    clean_metrics[key] = _finite_number(
+                        metrics[key],
+                        minimum=-1.0,
+                        maximum=1.0,
+                        code=f"invalid_{key}",
+                    )
             if "edge_dice" in metrics:
                 clean_metrics["edge_dice"] = _finite_number(
                     metrics["edge_dice"], minimum=0.0, maximum=1.0, code="invalid_edge_dice"
@@ -158,6 +188,13 @@ def validate_summary(document: Any) -> dict[str, Any]:
                     maximum=1.0,
                     code="invalid_normalized_mae",
                 )
+            if "artisan_baseline_normalized_mae" in metrics:
+                clean_metrics["artisan_baseline_normalized_mae"] = _finite_number(
+                    metrics["artisan_baseline_normalized_mae"],
+                    minimum=0.0,
+                    maximum=1.0,
+                    code="invalid_baseline_normalized_mae",
+                )
             if "seam_free_4x" in metrics:
                 clean_metrics["seam_free_4x"] = _optional_bool(
                     metrics["seam_free_4x"], "invalid_seam_free_4x"
@@ -171,6 +208,17 @@ def validate_summary(document: Any) -> dict[str, Any]:
                     metrics["artisan_baseline_anchor_count"],
                     "invalid_baseline_anchor_count",
                 )
+            for key in (
+                "subpath_count",
+                "artisan_baseline_subpath_count",
+                "svg_bytes",
+                "artisan_baseline_svg_bytes",
+            ):
+                if key in metrics:
+                    clean_metrics[key] = _nonnegative_integer(metrics[key], f"invalid_{key}")
+            for key in ("elapsed_seconds", "artisan_baseline_elapsed_seconds"):
+                if key in metrics:
+                    clean_metrics[key] = _nonnegative_number(metrics[key], f"invalid_{key}")
             if "safe_svg" in metrics:
                 safe_svg = _require_mapping(metrics["safe_svg"], "safe_svg_must_be_object")
                 _reject_unknown_keys(safe_svg, _SAFE_SVG_KEYS)
@@ -251,11 +299,18 @@ def aggregate_summary(document: Any) -> dict[str, Any]:
     for case in cases:
         status_counts[case["status"]] += 1
     success_count = status_counts["passed"]
+    potentially_successful = success_count + status_counts["unverified"]
+    if success_count >= 38:
+        success_status = "passed"
+    elif potentially_successful >= 38:
+        success_status = "unverified"
+    else:
+        success_status = "failed"
     gates["success_count"] = _gate(
-        "passed" if success_count >= 38 else "failed",
+        success_status,
         f"{success_count}/40",
         ">=38/40",
-        "案例状态为 passed 才计入成功数。",
+        "只有 passed 计入成功数；未运行且仍可能达到门槛时保持 unverified。",
     )
 
     edge_values = _metric_values(cases, "edge_dice")
@@ -434,13 +489,14 @@ def aggregate_summary(document: Any) -> dict[str, Any]:
         "benchmark": "KORYAO Vector60",
         "overall_status": overall_status,
         "case_counts": status_counts,
+        "fallback_count": sum(bool(case.get("fallback_used")) for case in cases),
+        "cases": cases,
         "gate_counts": gate_counts,
         "gates": {key: gates[key] for key in _GATE_ORDER},
         "comparisons": [
             {
                 "case_id": case["case_id"],
                 "status": "unverified",
-                "relative_ref": f"comparisons/{case['category']}/{case['case_id']}.png",
             }
             for case in cases
         ],
@@ -460,6 +516,14 @@ def _display(value: Any) -> str:
 def render_markdown(result: Mapping[str, Any]) -> str:
     """Render an aggregate result without embedding input paths or artifact content."""
 
+    generated_comparisons = any(
+        item.get("status") == "generated_unreviewed" for item in result["comparisons"]
+    )
+    comparison_note = (
+        "`generated_unreviewed` 仅表示匿名对比图已经生成，仍未完成 4 倍人工检查。"
+        if generated_comparisons
+        else "对比图尚未生成或复核，状态保持 `unverified`。"
+    )
     lines = [
         "# KORYAO Vector60 基准报告",
         "",
@@ -487,19 +551,41 @@ def render_markdown(result: Mapping[str, Any]) -> str:
             "| ---: | ---: | ---: | ---: |",
             "| {passed} | {failed} | {skipped} | {unverified} |".format(**result["case_counts"]),
             "",
-            "## 前后对比图预留",
+            f"Artisan baseline 回退：{result.get('fallback_count', 0)} 个案例。",
             "",
-            "以下仅是脱敏相对引用约定，不代表对应图片已生成或已验证。不得提交源素材或临时渲染。",
+            "## 逐图匿名指标",
+            "",
+            "| 案例 | 状态 | 回退 | SSIM 基线/增强 | MAE 基线/增强 | Edge Dice 基线/增强 | 锚点 基线/增强 | 子路径 基线/增强 | SVG bytes 基线/增强 | 评分秒数 基线/增强 |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
             "",
         ]
     )
-    for comparison in result["comparisons"]:
-        relative_ref = comparison["relative_ref"]
-        if not _COMPARISON_REF_RE.fullmatch(relative_ref):
-            raise SummaryValidationError("unsafe_comparison_reference")
+    for case in result.get("cases", []):
+        metrics = case.get("metrics", {})
         lines.append(
-            f"- `{comparison['case_id']}`：`{comparison['status']}`；预留 `{relative_ref}`"
+            f"| `{case['case_id']}` | `{case['status']}` | "
+            f"`{str(bool(case.get('fallback_used'))).lower()}` | "
+            f"{_display(metrics.get('artisan_baseline_ssim'))} / "
+            f"{_display(metrics.get('ssim'))} | "
+            f"{_display(metrics.get('artisan_baseline_normalized_mae'))} / "
+            f"{_display(metrics.get('normalized_mae'))} | "
+            f"{_display(metrics.get('artisan_baseline_edge_dice'))} / "
+            f"{_display(metrics.get('edge_dice'))} | "
+            f"{_display(metrics.get('artisan_baseline_anchor_count'))} / "
+            f"{_display(metrics.get('anchor_count'))} | "
+            f"{_display(metrics.get('artisan_baseline_subpath_count'))} / "
+            f"{_display(metrics.get('subpath_count'))} | "
+            f"{_display(metrics.get('artisan_baseline_svg_bytes'))} / "
+            f"{_display(metrics.get('svg_bytes'))} | "
+            f"{_display(metrics.get('artisan_baseline_elapsed_seconds'))} / "
+            f"{_display(metrics.get('elapsed_seconds'))} |"
         )
+    lines.extend(["", "## 前后对比图", "", comparison_note, ""])
+    for comparison in result["comparisons"]:
+        case_id = comparison["case_id"]
+        if not _ANONYMOUS_CASE_ID_RE.fullmatch(case_id):
+            raise SummaryValidationError("unsafe_comparison_identifier")
+        lines.append(f"- `{case_id}`：`{comparison['status']}`")
     return "\n".join(lines) + "\n"
 
 

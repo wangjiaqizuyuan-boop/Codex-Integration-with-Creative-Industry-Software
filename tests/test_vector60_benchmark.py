@@ -147,11 +147,12 @@ class Vector60BenchmarkTests(unittest.TestCase):
         with self.assertRaisesRegex(SummaryValidationError, "duplicate_case_id"):
             validate_summary(duplicate)
 
-    def test_markdown_contains_only_safe_relative_comparison_placeholders(self) -> None:
+    def test_markdown_contains_only_anonymous_comparison_statuses(self) -> None:
         report = render_markdown(aggregate_summary(make_summary()))
 
-        self.assertIn("comparisons/logo_or_icon/logo_or_icon-01.png", report)
-        self.assertIn("不代表对应图片已生成或已验证", report)
+        self.assertIn("`logo_or_icon-01`：`unverified`", report)
+        self.assertNotIn(".png", report)
+        self.assertNotIn("comparisons/", report)
         self.assertNotIn("data:image", report)
         self.assertNotIn("http://", report)
         self.assertNotIn("https://", report)
