@@ -1,8 +1,8 @@
-# 五模式图片矢量化
+# 四模式图片矢量化
 
-> Artisan 的最终渲染自适应少锚点阶段、三种兼容质量预设、缓存和回退语义见 [最少锚点、高相似度的自适应矢量优化](adaptive-vector-optimization.md)。`editable-99` 使用独立的五项硬门槛与颜色候选搜索；Exact、Smart、Lightweight 不进入 Artisan 阶段。
+> Artisan 的最终渲染自适应少锚点阶段、兼容质量预设、缓存和回退语义见 [最少锚点、高相似度的自适应矢量优化](adaptive-vector-optimization.md)。Exact、Smart、Lightweight 不进入 Artisan 阶段。
 
-KORYAO 使用一个统一入口提供五种矢量化模式。原有智能、轻量、精确和匠心完整保留；`editable-99` 是独立的“质量约束下复杂度最小化”模式，不是旧模式改名。所有模式都只读取用户明确传入的一张 PNG/JPEG，并输出不含嵌入位图、脚本和外链的 SVG。
+KORYAO 使用一个统一入口提供四种公开矢量化模式：智能、轻量、精确和匠心。内部质量预设不是第五种公开模式。所有模式都只读取用户明确传入的一张 PNG/JPEG，并输出不含嵌入位图、脚本和外链的 SVG。
 
 普通客户工作流不直接按单一模式起步，而是固定两阶段：先使用 `exact` 完成像素级打印 / 精确重建并验证基线，再按客户目标使用 `artisan` 或客户明确选择的 `smart` / `lightweight` 绘制矢量。两个阶段都禁止使用 Illustrator Image Trace；精确重建超限时停止，不自动描摹。
 
@@ -14,7 +14,6 @@ KORYAO 使用一个统一入口提供五种矢量化模式。原有智能、轻�
 | `smart` 智能矢量 | 24 色、4 级透明度、适度清理和节点简化 | 插画、海报素材、普通设计再编辑 | 否 |
 | `lightweight` 轻量矢量 | 8 色、2 级透明度、更强碎片清理和简化 | Logo、图标、纹样、流畅编辑 | 否 |
 | `exact` 精确重建 | 不缩放、不减色；同色扫描段横向与纵向合并 | 技术证明、RGBA 像素验证、存档 | 是 |
-| `editable-99` 99% 可编辑 | Exact RGBA 可复核基线；256→32 色候选；误差热力图与局部恢复；复杂度保护 | 需要严格视觉门槛且要继续编辑的交付 | 不是逐像素要求；必须同时通过五项 99% 质量门槛 |
 
 `balanced` 作为兼容别名会映射到 `smart`。
 
@@ -37,9 +36,6 @@ python -m starbridge_mcp.vectorization.cli --input "<input.png>" --mode exact --
 
 # 客户第二阶段：绘制型匠心矢量
 python -m starbridge_mcp.vectorization.cli --input "<input.png>" --mode artisan --reference-id "sample"
-
-# 客户明确要求五项 99% 质量门槛
-python -m starbridge_mcp.vectorization.cli --input "<input.png>" --mode editable-99 --quality-preset editable-99 --target-difference 1.0 --reference-id "sample"
 
 # 兼容旧入口：裸调用仍映射 smart；客户工作流不要裸调用
 python -m starbridge_mcp.vectorization.cli --input "<input.png>" --reference-id "sample"
@@ -72,7 +68,7 @@ npm.cmd run vector-app:start
 当前桌面原型提供：
 
 - PNG/JPEG 文件选择与拖放；
-- 匠心、智能、轻量、精确、99% 可编辑五种模式卡片；
+- 匠心、智能、轻量、精确四种模式卡片；
 - 颜色、最大尺寸、路径平滑、碎片清理和透明阈值；
 - 后台工作线程，转换时界面保持响应；
 - 原图与处理预览并排查看；
@@ -107,26 +103,12 @@ examples/output/vectorization/<reference-id>/<mode>/
   parameters.json
   vector_report.json
   vector_report.md
-  editable_99.json       # 仅 editable-99
-  error_heatmap.png      # 仅 editable-99
   svg_render.png         # 最终 SVG 渲染证据
   artisan_structure.json  # 仅匠心模式
   artisan_edit_index.json # 仅匠心模式，代理优先读取
 ```
 
 报告包含源文件 SHA-256、原始/输出尺寸、颜色、复合路径、子路径、节点、SVG 字节数、运行参数、安全验证和耗时。报告不记录源文件名或绝对路径。
-
-`editable_99.json` 额外保存颜色日程、每个候选的五项指标、子路径、节点、SVG 大小、耗时、淘汰原因、局部恢复区域和前后变化、最终状态及 Illustrator 风险策略。硬门槛为：
-
-- `SSIM ≥ 0.990`
-- `difference_percent ≤ 1.0`
-- `normalized_mae ≤ 0.010`
-- `edge_dice ≥ 0.980`
-- `alpha_mae ≤ 0.005`
-
-指标范围固定如下：SSIM、normalized MAE、edge Dice、alpha MAE 均使用 `[0, 1]`；`difference_percent = max(0, (1 - SSIM) × 100)`。RGB 指标在白底合成后的 8-bit RGB 上计算，normalized MAE 为平均绝对通道误差除以 255；alpha MAE 为 8-bit alpha 平均绝对误差除以 255；edge Dice 使用同一 Canny 与 3×3 邻域容差。候选、局部恢复和最终结果使用同一计算函数。
-
-通过候选按 `subpaths → points → colors → SVG bytes → elapsed` 选择。`subpaths ≤ 30,000` 且 `points ≤ 120,000` 才允许默认自动打开；超过 60,000 子路径或 240,000 节点默认禁止自动打开，超过 300,000 子路径只存档。阈值属于 CreNexus 工程保护，不是 Adobe 官方上限。
 
 匠心完整结构文件额外记录基础、主体、细节、点睛图层，稳定的 `shape-*` / `layer-*` ID、父子层级、颜色、边界框和锚点指标。第 5 轮再按局部几何分成 `flow-contour`、`ornament`、`detail` 和 `micro-detail`；这些是曲线意图，不是人物、文字或物体内容识别。
 
@@ -218,6 +200,6 @@ maximum_channel_difference
 - 智能和轻量模式是可编辑近似结果，会主动减色、清理小区域并简化轮廓。
 - 匠心模式额外使用曲线拟合、设计角色层级和线稿自适应。细线稿中心线、交叉点续接和几何意图候选分别通过独立质量门；意图候选必须再减少至少 3% 子路径、锚点和总点数，编辑批次不增加，精确率/Dice 下降不超过 0.6 个百分点、召回率下降不超过 1 个百分点。失败时依次保留第 4 轮续接中心线、第 3 轮中心线或第 2 轮轮廓填充。当前角色来自本地几何推断，不宣称已经识别人脸、文字或具体物体语义。
 - 精确模式保留源像素网格，但大量矩形不等同于轻量商业矢量插画。
-- `editable-99` 只在五项指标全部通过后宣称质量通过；`high-fidelity`、smart、artisan、lightweight 不能改名冒充 99%。
+- 内部质量预设只用于候选评估，不能注册成第五种公开模式，也不能冒充未经 Vector60 验收的质量结论。
 - 当前统一核心负责 SVG、预览、参数和报告；Illustrator `.ai` 保存仍是可选桌面交付步骤，需要用户明确请求。
 - 源图和生成结果只留在本地忽略目录，不能提交到公开仓库。

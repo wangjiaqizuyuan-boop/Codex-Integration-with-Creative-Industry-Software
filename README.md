@@ -47,8 +47,7 @@ KORYAO Basic 不是“套壳聊天页面”，也不是把图片上传到远程�
 | 能力 | 状态 | 说明 |
 | --- | --- | --- |
 | 像素重建（精确重建） / Pixel Reconstruction | **Stable core** | 将工作分辨率中的 RGBA 像素重建为真实 SVG 几何，并逐像素回渲染核对 |
-| Editable-99 | **Available** | 使用 SSIM、difference、MAE、edge Dice、alpha MAE 五项门槛筛选高保真候选 |
-| 匠心 / 智能 / 轻量矢量 | **Available** | 面向插画、图标、Logo 与纹样的不同编辑性和复杂度需求 |
+| 匠心 / 智能 / 轻量矢量 | **Available** | 面向插画、图标、Logo 与纹样的不同编辑性和复杂度需求；匠心模式可选 Vector60 自动增强 |
 | Codex + MCP 本地调度 | **Available** | 项目级配置、安全工具注册、任务计划和脱敏证据已实现 |
 | Windows 桌面端 | **Experimental** | 已有启动、关闭、重启和 sidecar 生命周期证据，仍需更多干净机器验收 |
 | AI / PSD 原生交付 | **Experimental** | Windows 上调用 Illustrator / Photoshop，要求确认、验证和不覆盖 |
@@ -57,13 +56,12 @@ KORYAO Basic 不是“套壳聊天页面”，也不是把图片上传到远程�
 | ComfyUI / Blender / CAD / 剪映闭环 | **Partial / Planned** | 已有探针、协议、dry-run 或实验实现，尚未完成统一客户级验收 |
 | 正式商业发布 | **Not released** | 仍缺代码签名、SmartScreen、升级回滚、正式安装包和售后流程 |
 
-## 五种图片矢量化模式
+## 四种图片矢量化模式
 
 | 模式 | 适合场景 | 主要特点 |
 | --- | --- | --- |
 | **像素重建 `exact`** | 像素级存档、忠实复刻 | 每个像素转为 SVG 几何；不嵌入 PNG、Base64、脚本或外链 |
-| **Editable-99 `editable-99`** | 高保真后续编辑 | 只有五项质量指标全部通过，候选结果才会进入最终选择 |
-| **匠心矢量 `artisan`** | 插画、传统纹样、复杂图形 | 更少锚点、更顺曲线，强调可编辑性 |
+| **匠心矢量 `artisan`** | 插画、传统纹样、复杂图形 | 更少锚点、更顺曲线；可选 `--auto-enhance` 和场景预设 |
 | **智能矢量 `smart`** | 通用设计素材 | 平衡相似度、细节与文件复杂度 |
 | **轻量矢量 `lightweight`** | Logo、图标、标识 | 减少颜色、碎片、节点和文件体积 |
 
@@ -127,7 +125,6 @@ bash ./bootstrap.sh --profile auto
 python -m pip install -e ".[vectorization]"
 
 npm.cmd run illustrator:vectorize -- --input "<input.png>" --mode exact --max-dimension 1024 --max-svg-size-mb 128 --reference-id "reference"
-npm.cmd run illustrator:vectorize -- --input "<input.png>" --mode editable-99 --quality-preset editable-99 --target-difference 1.0 --reference-id "reference"
 npm.cmd run illustrator:vectorize -- --input "<input.png>" --mode artisan --reference-id "reference"
 npm.cmd run illustrator:vectorize -- --input "<input.png>" --mode smart --reference-id "reference"
 npm.cmd run illustrator:vectorize -- --input "<input.png>" --mode lightweight --reference-id "reference"
