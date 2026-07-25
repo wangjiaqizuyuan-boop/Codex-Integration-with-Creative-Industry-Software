@@ -38,8 +38,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--mode",
         default="smart",
         help=(
-            "smart (default), lightweight, exact, artisan; "
-            "balanced is accepted as a smart alias"
+            "smart (default), lightweight, exact, artisan; balanced is accepted as a smart alias"
         ),
     )
     parser.add_argument("--reference-id", default="vector-job")

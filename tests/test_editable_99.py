@@ -61,9 +61,7 @@ class PublicVectorModeBoundaryTests(unittest.TestCase):
     def test_cli_rejects_editable_99_before_reading_the_input(self) -> None:
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
-            exit_code = cli.main(
-                ["--input", "placeholder.png", "--mode", "editable-99"]
-            )
+            exit_code = cli.main(["--input", "placeholder.png", "--mode", "editable-99"])
 
         response = json.loads(stdout.getvalue())
         self.assertEqual(exit_code, 1)
@@ -204,9 +202,7 @@ class Editable99SelectionTests(unittest.TestCase):
     def test_selection_minimizes_subpaths_then_points_colors_and_size(self) -> None:
         candidates = [
             self.candidate("few-points", subpaths=20, points=40, colors=32, size=900),
-            self.candidate(
-                "few-subpaths", subpaths=19, points=200, colors=256, size=2_000
-            ),
+            self.candidate("few-subpaths", subpaths=19, points=200, colors=256, size=2_000),
             self.candidate("failed", subpaths=1, points=4, colors=2, size=100),
         ]
         candidates[-1]["status"] = "preview-only"
@@ -219,9 +215,7 @@ class Editable99SelectionTests(unittest.TestCase):
         candidates = [
             self.candidate("large", subpaths=10, points=30, colors=64, size=800),
             self.candidate("few-colors", subpaths=10, points=30, colors=48, size=900),
-            self.candidate(
-                "few-points", subpaths=10, points=29, colors=256, size=2_000
-            ),
+            self.candidate("few-points", subpaths=10, points=29, colors=256, size=2_000),
         ]
 
         selected = adaptive_optimize.select_editable_99_candidate(candidates)
@@ -241,15 +235,9 @@ class IllustratorSafetyTests(unittest.TestCase):
         )
 
         safe = adaptive_optimize.assess_illustrator_complexity(30_000, 120_000, preset)
-        warning = adaptive_optimize.assess_illustrator_complexity(
-            30_001, 120_001, preset
-        )
-        blocked = adaptive_optimize.assess_illustrator_complexity(
-            60_001, 240_001, preset
-        )
-        archive = adaptive_optimize.assess_illustrator_complexity(
-            300_001, 1_200_004, preset
-        )
+        warning = adaptive_optimize.assess_illustrator_complexity(30_001, 120_001, preset)
+        blocked = adaptive_optimize.assess_illustrator_complexity(60_001, 240_001, preset)
+        archive = adaptive_optimize.assess_illustrator_complexity(300_001, 1_200_004, preset)
 
         self.assertEqual(safe["risk_level"], "safe")
         self.assertTrue(safe["auto_open_allowed"])
