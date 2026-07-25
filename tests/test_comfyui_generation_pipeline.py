@@ -201,6 +201,64 @@ class ComfyUiGenerationPipelineTests(unittest.TestCase):
             with self.subTest(basename=basename), self.assertRaises(ValueError):
                 _validate_generated_image_payload(basename, payload)
 
+    def test_invalid_output_manifest_never_fetches_or_registers_artifacts(self) -> None:
+        valid_image = {"filename": "generated.png", "subfolder": "", "type": "output"}
+        manifests = (
+            {"image_count": 2, "images": [valid_image]},
+            {"image_count": 2, "images": [valid_image, "not-an-image-object"]},
+            {"image_count": True, "images": [valid_image]},
+        )
+        fetch_count = 0
+
+        def fetch_output(_base_url: str, _image: dict[str, object], _timeout: int) -> bytes:
+            nonlocal fetch_count
+            fetch_count += 1
+            return b"must not be fetched"
+
+        for case, manifest in enumerate(manifests):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                paths = resolve_app_data_paths(Path(directory))
+                adapter = ComfyUiAdapter(
+                    RuntimeInputVault(),
+                    result_reader=lambda _arguments, current=manifest: {
+                        "ok": True,
+                        "state": "completed",
+                        "terminal": True,
+                        "result_ready": True,
+                        "output_manifest": current,
+                    },
+                    output_fetcher=fetch_output,
+                )
+                context = AdapterContext(
+                    job_id=f"job-invalid-manifest-{case}",
+                    project_id="project-invalid-manifest",
+                    workflow_id=WORKFLOW_ID,
+                    step=WorkflowStep(
+                        step_id="collect-results",
+                        adapter="comfyui",
+                        input_data={"operation": "collect-results"},
+                    ),
+                    app_paths=paths,
+                    cancellation=CancellationToken(),
+                )
+                atomic_write_json(
+                    adapter._state_path(context),
+                    {"schemaVersion": 1, "submitted": True, "promptId": "prompt-test"},
+                )
+
+                result = adapter.execute(context)
+                artifact_files = [path for path in paths.artifacts.rglob("*") if path.is_file()]
+
+                self.assertEqual("failed", result.status)
+                self.assertEqual(
+                    "comfyui_output_manifest_invalid",
+                    result.error.code if result.error else None,
+                )
+                self.assertEqual((), result.artifacts)
+                self.assertEqual([], artifact_files)
+
+        self.assertEqual(0, fetch_count)
+
     def test_multi_output_failure_removes_files_written_by_the_same_batch(self) -> None:
         image_buffer = io.BytesIO()
         Image.new("RGB", (8, 8), (12, 34, 56)).save(image_buffer, format="PNG")

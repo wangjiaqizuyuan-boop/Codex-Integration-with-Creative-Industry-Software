@@ -436,21 +436,29 @@ class ComfyUiAdapter(CreativeAdapter):
                     next_steps=("在本机 ComfyUI 检查输出节点和执行状态。",),
                 ),
             )
-        manifest = result.get("output_manifest") or {}
-        images = manifest.get("images") or []
-        if not isinstance(images, list) or not 1 <= len(images) <= MAX_OUTPUTS:
+        manifest = result.get("output_manifest")
+        images = manifest.get("images") if isinstance(manifest, dict) else None
+        image_count = manifest.get("image_count") if isinstance(manifest, dict) else None
+        if (
+            not isinstance(images, list)
+            or isinstance(image_count, bool)
+            or not isinstance(image_count, int)
+            or image_count != len(images)
+            or not 1 <= image_count <= MAX_OUTPUTS
+            or any(not isinstance(image, dict) for image in images)
+        ):
             return AdapterResult(
                 status="failed",
                 error=JobError(
-                    code="comfyui_output_count_invalid", message="ComfyUI 输出数量不在安全范围内。"
+                    code="comfyui_output_manifest_invalid",
+                    message="ComfyUI 产物清单结构或数量不一致。",
+                    next_steps=("在本机 ComfyUI 检查输出节点和 history 后重新建立任务。",),
                 ),
             )
         store = ArtifactStore(context.app_paths.artifacts)
         artifacts = []
         written_targets: list[Path] = []
         for index, image in enumerate(images):
-            if not isinstance(image, dict):
-                continue
             try:
                 basename = str(image.get("filename") or "")
                 validate_basename(basename)
