@@ -38,7 +38,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--mode",
         default="smart",
         help=(
-            "smart (default), lightweight, exact, editable-99, artisan; "
+            "smart (default), lightweight, exact, artisan; "
             "balanced is accepted as a smart alias"
         ),
     )
@@ -54,7 +54,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-svg-size-mb", type=float, default=None)
     parser.add_argument(
         "--quality-preset",
-        choices=("high-fidelity", "balanced", "minimal", "editable-99"),
+        choices=("high-fidelity", "balanced", "minimal"),
         default="high-fidelity",
     )
     parser.add_argument("--target-difference", type=float, default=None)

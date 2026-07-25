@@ -82,7 +82,7 @@ SESSION_HEADER = "X-KORYAO-Session"
 READY_PREFIX = "STARBRIDGE_READY "
 MAX_REQUEST_BODY_BYTES = 1024 * 1024
 VECTOR_INPUT_MAX_BYTES = 128 * 1024 * 1024
-VECTOR_MODES = frozenset({"artisan", "smart", "lightweight", "exact", "editable-99"})
+VECTOR_MODES = frozenset({"artisan", "smart", "lightweight", "exact"})
 DEFAULT_DEV_ORIGINS = (
     "http://127.0.0.1:5173",
     "http://localhost:5173",
@@ -644,7 +644,7 @@ class KORYAOBackend:
                     reference_id=reference_id,
                     output_dir=str(output_dir),
                     output_root=str(output_root),
-                    colors=(None if mode in {"exact", "editable-99"} else optional_int("colors")),
+                    colors=(None if mode == "exact" else optional_int("colors")),
                     max_dimension=optional_int("maxDimension"),
                     simplify_ratio=optional_float("simplifyRatio"),
                     min_region_area=optional_int("minRegionArea"),
@@ -861,7 +861,6 @@ class KORYAOBackend:
                                 "smart",
                                 "lightweight",
                                 "exact",
-                                "editable-99",
                             ],
                             "imageTraceFallback": False,
                         },
