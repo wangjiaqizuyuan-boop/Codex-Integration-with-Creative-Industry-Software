@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -13,7 +14,7 @@ from starbridge_mcp.adapters.comfyui import ComfyUiAdapter, RuntimeInputVault
 from starbridge_mcp.adapters.comfyui.adapter import _validate_generated_image_payload
 from starbridge_mcp.core.app_data import resolve_app_data_paths
 from starbridge_mcp.domain.models import WorkflowStep
-from starbridge_mcp.storage.atomic_json import atomic_write_json
+from starbridge_mcp.storage.atomic_json import atomic_write_json, read_json
 from starbridge_mcp.storage.evidence_store import EvidenceStore
 from starbridge_mcp.storage.job_store import JobStore
 from starbridge_mcp.storage.project_store import ProjectStore
@@ -258,6 +259,62 @@ class ComfyUiGenerationPipelineTests(unittest.TestCase):
         self.assertEqual("comfyui_output_fetch_failed", result.error.code if result.error else None)
         self.assertEqual((), result.artifacts)
         self.assertEqual([], artifact_files)
+
+    def test_checkpoint_failure_removes_the_completed_output_batch(self) -> None:
+        image_buffer = io.BytesIO()
+        Image.new("RGB", (8, 8), (12, 34, 56)).save(image_buffer, format="PNG")
+        png_bytes = image_buffer.getvalue()
+        result_payload = {
+            "ok": True,
+            "state": "completed",
+            "terminal": True,
+            "result_ready": True,
+            "output_manifest": {
+                "image_count": 1,
+                "images": [{"filename": "generated.png", "subfolder": "", "type": "output"}],
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = resolve_app_data_paths(Path(directory))
+            adapter = ComfyUiAdapter(
+                RuntimeInputVault(),
+                result_reader=lambda _arguments: result_payload,
+                output_fetcher=lambda _base_url, _image, _timeout: png_bytes,
+            )
+            context = AdapterContext(
+                job_id="job-checkpoint-rollback",
+                project_id="project-checkpoint-rollback",
+                workflow_id=WORKFLOW_ID,
+                step=WorkflowStep(
+                    step_id="collect-results",
+                    adapter="comfyui",
+                    input_data={"operation": "collect-results"},
+                ),
+                app_paths=paths,
+                cancellation=CancellationToken(),
+            )
+            atomic_write_json(
+                adapter._state_path(context),
+                {"schemaVersion": 1, "submitted": True, "promptId": "prompt-test"},
+            )
+
+            with patch(
+                "starbridge_mcp.adapters.comfyui.adapter.atomic_write_json",
+                side_effect=OSError("checkpoint unavailable"),
+            ):
+                result = adapter.execute(context)
+            artifact_files = [path for path in paths.artifacts.rglob("*") if path.is_file()]
+            recovery_state = read_json(adapter._state_path(context))
+
+        self.assertEqual("failed", result.status)
+        self.assertEqual(
+            "comfyui_output_checkpoint_failed",
+            result.error.code if result.error else None,
+        )
+        self.assertEqual((), result.artifacts)
+        self.assertEqual([], artifact_files)
+        self.assertEqual("prompt-test", recovery_state["promptId"])
 
     def test_unavailable_service_soft_fails_without_prompt_submission(self) -> None:
         submit_calls = 0

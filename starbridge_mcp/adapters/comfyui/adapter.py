@@ -151,6 +151,16 @@ def _fetch_output(base_url: str, image: dict[str, Any], timeout: int) -> bytes:
     return payload
 
 
+def _rollback_output_batch(written_targets: list[Path]) -> bool:
+    rollback_ok = True
+    for written_target in reversed(written_targets):
+        try:
+            written_target.unlink(missing_ok=True)
+        except OSError:
+            rollback_ok = False
+    return rollback_ok
+
+
 class ComfyUiAdapter(CreativeAdapter):
     adapter_id = "comfyui"
 
@@ -466,12 +476,7 @@ class ComfyUiAdapter(CreativeAdapter):
                     )
                 )
             except (OSError, ValueError):
-                rollback_ok = True
-                for written_target in reversed(written_targets):
-                    try:
-                        written_target.unlink(missing_ok=True)
-                    except OSError:
-                        rollback_ok = False
+                rollback_ok = _rollback_output_batch(written_targets)
                 return AdapterResult(
                     status="failed",
                     error=JobError(
@@ -501,19 +506,46 @@ class ComfyUiAdapter(CreativeAdapter):
                     code="comfyui_outputs_missing", message="没有登记任何真实生成文件。"
                 ),
             )
-        atomic_write_json(
-            self._state_path(context),
-            {
-                "schemaVersion": 1,
-                "submitted": True,
-                "promptIdHash": state_payload.get("promptIdHash"),
-                "lastKnownState": "completed",
-                "outputCount": len(artifacts),
-                "artifactHashes": [artifact.sha256 for artifact in artifacts],
-                "promptPersisted": False,
-                "modelNamePersisted": False,
-            },
-        )
+        try:
+            atomic_write_json(
+                self._state_path(context),
+                {
+                    "schemaVersion": 1,
+                    "submitted": True,
+                    "promptIdHash": state_payload.get("promptIdHash"),
+                    "lastKnownState": "completed",
+                    "outputCount": len(artifacts),
+                    "artifactHashes": [artifact.sha256 for artifact in artifacts],
+                    "promptPersisted": False,
+                    "modelNamePersisted": False,
+                },
+            )
+        except OSError:
+            rollback_ok = _rollback_output_batch(written_targets)
+            return AdapterResult(
+                status="failed",
+                error=JobError(
+                    code=(
+                        "comfyui_output_checkpoint_failed"
+                        if rollback_ok
+                        else "comfyui_output_rollback_failed"
+                    ),
+                    message=(
+                        "生成产物完成检查点未能安全写入，本批次文件已清理。"
+                        if rollback_ok
+                        else "生成产物完成检查点写入失败，且本批次文件未能全部清理。"
+                    ),
+                    retryable=rollback_ok,
+                    next_steps=(
+                        (
+                            "检查本机状态目录的磁盘空间和写权限后，再读取同一 ComfyUI 结果；"
+                            "不要重复提交生成。"
+                            if rollback_ok
+                            else "检查当前任务的隔离产物目录并手动清理残留文件。"
+                        ),
+                    ),
+                ),
+            )
         return AdapterResult(
             status="completed",
             output={"state": "completed", "outputCount": len(artifacts)},
