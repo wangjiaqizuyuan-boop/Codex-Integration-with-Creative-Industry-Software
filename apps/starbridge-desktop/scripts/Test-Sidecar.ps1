@@ -444,6 +444,8 @@ $child.Dispose()
         authenticated_bootstrap = $true
         community_vectorization = $true
         vector60_python_runtime = $true
+        vector60_node_runtime_included = $false
+        vector60_svgo_runtime_included = $false
         vector_path_redacted = $true
         graceful_shutdown = $true
         process_exited = $process.HasExited

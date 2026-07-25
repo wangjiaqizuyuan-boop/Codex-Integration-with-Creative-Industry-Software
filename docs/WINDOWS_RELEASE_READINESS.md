@@ -62,3 +62,16 @@ Microsoft 官方说明：Store 分发的 MSIX 由 Store 重签，但 MSI/EXE 不
 | 公开下载与收费发布 | 未签名内部预览已通过 GitHub prerelease 开放给团队测试；正式签名版与收费发布未开放 |
 
 结论：只能继续开发和内部验收，不得创建正式收费 Release。
+
+## Vector60 内部无签名构建门
+
+仓库提供手动触发的 `.github/workflows/vector60-internal-windows.yml`，仅用于从所选提交
+构建短期 Windows 内测 artifact。工作流会真实构建并运行 one-folder sidecar，核对
+VTracer 0.6.15、skia-pathops 0.9.2 和 svgpathtools 1.7.2，再构建 NSIS。产物名称和
+清单固定标记 `INTERNAL / UNSIGNED / NOT FOR RELEASE`，保留 7 天，不创建 GitHub
+Release，也不使用任何签名密钥。
+
+该工作流不会把 Node.js 或 SVGO 打进 sidecar/安装包。SVGO 4.0.2 只在源码、CI 和构建
+环境由根 lockfile 固定。工作流成功只能证明 CI 中完成构建及 sidecar 验收；在实际运行
+前仍属于“未验证”，且即使成功也不代表干净 Windows 安装、Defender、SmartScreen、
+Authenticode 或正式发布门已通过。

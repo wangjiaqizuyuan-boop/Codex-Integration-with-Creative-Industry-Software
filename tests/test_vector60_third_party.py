@@ -26,18 +26,30 @@ class Vector60ThirdPartyTests(unittest.TestCase):
     def test_notices_record_license_version_commit_and_scope(self) -> None:
         notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
         expected = {
-            "VTracer": ("MIT", "0.6.15", "fd9cdb08e622f237eb05be553a020ddc9e4c47a1"),
+            "VTracer": (
+                "MIT",
+                "0.6.15",
+                "tag `0.6.15`",
+                "fd9cdb08e622f237eb05be553a020ddc9e4c47a1",
+            ),
             "skia-pathops": (
                 "BSD-3-Clause",
                 "0.9.2",
+                "tag `v0.9.2`",
                 "c11e91f442462d1efc1a45d76c76ae9e74aa0de4",
             ),
             "svgpathtools": (
                 "MIT",
                 "1.7.2",
+                "tag `v1.7.2`",
                 "284fc2c591d852ef51b6168e8d842065f3e41cc2",
             ),
-            "SVGO": ("MIT", "4.0.2", "b2309cf541aee11634eb653157b0ff86ab326e98"),
+            "SVGO": (
+                "MIT",
+                "4.0.2",
+                "tag `v4.0.2`",
+                "b2309cf541aee11634eb653157b0ff86ab326e98",
+            ),
         }
         for component, values in expected.items():
             with self.subTest(component=component):
@@ -46,6 +58,8 @@ class Vector60ThirdPartyTests(unittest.TestCase):
                     self.assertIn(value, notices)
         self.assertIn("diffvg and LIVE remain research references", notices)
         self.assertIn("No complete third-party repository is vendored", notices)
+        self.assertIn("do **not** bundle Node.js or SVGO", notices)
+        self.assertIn("import and distribution-version check", notices)
 
 
 if __name__ == "__main__":

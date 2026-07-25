@@ -66,10 +66,13 @@ class Vector60RuntimePackagingTest(unittest.TestCase):
             self.assertIn(f'"{import_name}"', spec)
         self.assertIn("copy_metadata(distribution)", spec)
         self.assertIn("vector60_python_runtime_included = $true", build)
+        self.assertIn("vector60_node_runtime_included = $false", build)
         self.assertIn("vector60_svgo_runtime_included = $false", build)
         self.assertIn("--vector60-runtime-check", sidecar_entry)
         self.assertIn("--vector60-runtime-check", build)
         self.assertIn("--vector60-runtime-check", sidecar_test)
+        self.assertIn("vector60_node_runtime_included = $false", sidecar_test)
+        self.assertIn("vector60_svgo_runtime_included = $false", sidecar_test)
         self.assertNotRegex(build.lower(), r"\bnpx\b")
 
     def test_ci_runs_real_cross_platform_runtime_smoke(self) -> None:
@@ -83,6 +86,26 @@ class Vector60RuntimePackagingTest(unittest.TestCase):
         self.assertIn("npm ci --ignore-scripts", workflow)
         self.assertIn("svgo --version", workflow)
         self.assertNotRegex(workflow.lower(), re.compile(r"\bnpx\b"))
+
+    def test_internal_windows_artifact_is_manual_unsigned_and_not_a_release(self) -> None:
+        workflow = (
+            REPO_ROOT / ".github" / "workflows" / "vector60-internal-windows.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertNotIn("\n  push:", workflow)
+        self.assertIn("contents: read", workflow)
+        self.assertIn("INTERNAL-UNSIGNED-NOT-FOR-RELEASE", workflow)
+        self.assertIn("Test-Sidecar.ps1", workflow)
+        self.assertIn("--vector60-runtime-check", workflow)
+        self.assertIn('$signature.Status -ne "NotSigned"', workflow)
+        self.assertIn("node_runtime_included = $false", workflow)
+        self.assertIn("svgo_runtime_included = $false", workflow)
+        self.assertIn("clean_machine_install_validated = $false", workflow)
+        self.assertIn("retention-days: 7", workflow)
+        self.assertNotIn("softprops/action-gh-release", workflow)
+        self.assertNotIn("TAURI_SIGNING_PRIVATE_KEY", workflow)
+        self.assertNotIn("WINDOWS_SIGNING_CERTIFICATE", workflow)
 
 
 if __name__ == "__main__":

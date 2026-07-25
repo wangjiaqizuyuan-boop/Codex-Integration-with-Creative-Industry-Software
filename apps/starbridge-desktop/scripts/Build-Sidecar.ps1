@@ -151,6 +151,7 @@ $result = [ordered]@{
         skia_pathops = "0.9.2"
         svgpathtools = "1.7.2"
     }
+    vector60_node_runtime_included = $false
     vector60_svgo_runtime_included = $false
     vector60_svgo_runtime_blocker = "SVGO requires a distributable Node runtime; the current PyInstaller/Tauri layout does not bundle one."
     vectorflow_gui_included = $false
