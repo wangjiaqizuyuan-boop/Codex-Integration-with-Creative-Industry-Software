@@ -259,6 +259,60 @@ class ComfyUiGenerationPipelineTests(unittest.TestCase):
         self.assertEqual((), result.artifacts)
         self.assertEqual([], artifact_files)
 
+    def test_multi_output_target_names_cannot_collide_with_source_prefixes(self) -> None:
+        image_buffer = io.BytesIO()
+        Image.new("RGB", (8, 8), (12, 34, 56)).save(image_buffer, format="PNG")
+        png_bytes = image_buffer.getvalue()
+        result_payload = {
+            "ok": True,
+            "state": "completed",
+            "terminal": True,
+            "result_ready": True,
+            "output_manifest": {
+                "image_count": 2,
+                "images": [
+                    {"filename": "2-generated.png", "subfolder": "", "type": "output"},
+                    {"filename": "generated.png", "subfolder": "", "type": "output"},
+                ],
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = resolve_app_data_paths(Path(directory))
+            adapter = ComfyUiAdapter(
+                RuntimeInputVault(),
+                result_reader=lambda _arguments: result_payload,
+                output_fetcher=lambda _base_url, _image, _timeout: png_bytes,
+            )
+            context = AdapterContext(
+                job_id="job-output-names",
+                project_id="project-output-names",
+                workflow_id=WORKFLOW_ID,
+                step=WorkflowStep(
+                    step_id="collect-results",
+                    adapter="comfyui",
+                    input_data={"operation": "collect-results"},
+                ),
+                app_paths=paths,
+                cancellation=CancellationToken(),
+            )
+            atomic_write_json(
+                adapter._state_path(context),
+                {"schemaVersion": 1, "submitted": True, "promptId": "prompt-test"},
+            )
+
+            result = adapter.execute(context)
+            artifact_files = sorted(
+                path.name for path in paths.artifacts.rglob("*") if path.is_file()
+            )
+
+        self.assertEqual("completed", result.status)
+        self.assertEqual(["1-2-generated.png", "2-generated.png"], artifact_files)
+        self.assertEqual(
+            ["1-2-generated.png", "2-generated.png"],
+            [artifact.basename for artifact in result.artifacts],
+        )
+
     def test_unavailable_service_soft_fails_without_prompt_submission(self) -> None:
         submit_calls = 0
 

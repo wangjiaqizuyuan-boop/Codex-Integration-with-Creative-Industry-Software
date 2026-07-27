@@ -454,7 +454,7 @@ class ComfyUiAdapter(CreativeAdapter):
             try:
                 basename = str(image.get("filename") or "")
                 validate_basename(basename)
-                target_name = basename if index == 0 else f"{index + 1}-{basename}"
+                target_name = basename if len(images) == 1 else f"{index + 1}-{basename}"
                 payload = self.output_fetcher(base_url, image, 15)
                 _validate_generated_image_payload(basename, payload)
                 target = store.allocate_path(context.project_id, context.job_id, target_name)
