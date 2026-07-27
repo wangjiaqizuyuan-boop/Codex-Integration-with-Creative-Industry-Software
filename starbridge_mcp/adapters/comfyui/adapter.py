@@ -427,7 +427,11 @@ class ComfyUiAdapter(CreativeAdapter):
                     "submittedAgain": False,
                 },
             )
-        if not result.get("result_ready"):
+        if (
+            state != "completed"
+            or result.get("terminal") is not True
+            or result.get("result_ready") is not True
+        ):
             return AdapterResult(
                 status="failed",
                 error=JobError(
