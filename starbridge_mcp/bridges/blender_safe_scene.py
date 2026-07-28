@@ -69,8 +69,44 @@ def build_scene_plan(
                     "reviewed manifest",
                 ],
             },
+            "artifact_contract": {
+                "schema_version": "1.0",
+                "batch_semantics": "atomic",
+                "output_scope": "ignored_output_directory_only",
+                "artifacts": [
+                    {
+                        "role": "editable_scene",
+                        "relative_path": "scene.blend",
+                        "media_type": "application/x-blender",
+                        "required": True,
+                    },
+                    {
+                        "role": "preview_render",
+                        "relative_path": "preview.png",
+                        "media_type": "image/png",
+                        "required": True,
+                    },
+                    {
+                        "role": "execution_receipt",
+                        "relative_path": "receipt.json",
+                        "media_type": "application/json",
+                        "required": True,
+                    },
+                ],
+                "evidence_required": ["relative_path", "size_bytes", "sha256"],
+                "completion_rule": "all_required_artifacts_verified",
+                "failure_rule": "mark_batch_failed_and_remove_current_batch_only",
+            },
+            "failure_recovery": {
+                "partial_success_allowed": False,
+                "failure_status": "failed",
+                "cleanup_scope": "current_batch_only",
+                "preserve": ["previous_verified_batch"],
+                "retry_from": "reviewed_scene_plan",
+            },
             "next_steps": [
                 "Review this plan before adding any Blender CLI render path.",
+                "Require every real run to satisfy artifact_contract before reporting completion.",
                 "If a render is later enabled, keep the script fixed-template and output under examples/output or output.",
             ],
         }

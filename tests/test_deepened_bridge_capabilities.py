@@ -31,6 +31,19 @@ class DeepenedBridgeCapabilitiesTest(unittest.TestCase):
         self.assertEqual("disabled", plan["script_policy"]["arbitrary_python"])
         self.assertEqual("not_opened", plan["script_policy"]["private_blend"])
         self.assertGreaterEqual(len(plan["scene"]["objects"]), 3)
+        contract = plan["artifact_contract"]
+        self.assertEqual("1.0", contract["schema_version"])
+        self.assertEqual("atomic", contract["batch_semantics"])
+        self.assertEqual(
+            {"scene.blend", "preview.png", "receipt.json"},
+            {item["relative_path"] for item in contract["artifacts"]},
+        )
+        self.assertTrue(all(item["required"] for item in contract["artifacts"]))
+        self.assertEqual(
+            ["relative_path", "size_bytes", "sha256"], contract["evidence_required"]
+        )
+        self.assertFalse(plan["failure_recovery"]["partial_success_allowed"])
+        self.assertEqual("current_batch_only", plan["failure_recovery"]["cleanup_scope"])
         self.assert_no_private_paths(plan)
 
     def test_blender_reference_reconstruction_plan_defines_verification_gate(self) -> None:

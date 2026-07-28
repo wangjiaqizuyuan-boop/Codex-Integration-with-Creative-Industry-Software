@@ -14,6 +14,14 @@
 | 参考图重建计划 | `examples/blender_bridge/reference_reconstruction_plan.py` | 生成防幻觉重建 dry-run 计划：先分割/估深/量测，再做同相机渲染误差校验 |
 | 总状态探测 | `examples/bridge_status.py` | 检查 `BLENDER_EXE`、常见安装路径和 `BLENDER_MCP_DIR` |
 
+`blender.scene_plan` 同时返回版本化 `artifact_contract`。未来确认后的本地执行器只有在同一批次得到以下三个产物，并为每项记录相对路径、字节数和 SHA-256 时，才能声明生成完成：
+
+- `scene.blend`：可继续编辑的 Blender 场景。
+- `preview.png`：固定相机的预览渲染。
+- `receipt.json`：记录计划版本和执行结果的脱敏回执。
+
+三项采用原子完成规则：缺少任一产物、哈希缺失或格式不符都必须把整批标记为 `failed`，清理仅限当前批次，不能把部分结果冒充成功。当前实现仍只返回 dry-run 契约，不创建这些文件。
+
 ## 需要本机安装什么
 
 - Blender desktop 或 blender CLI。
