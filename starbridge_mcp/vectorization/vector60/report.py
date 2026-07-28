@@ -39,6 +39,7 @@ WARNING_CODES = frozenset(
     {
         "high_quality_not_claimed",
         "baseline_render_unverified",
+        "report_write_failed",
         "primitive_fit.no_safe_proposal",
         "seam_repair.no_safe_proposal",
         *(f"candidate_failed.{candidate_id}" for candidate_id in APPROVED_CANDIDATE_IDS),

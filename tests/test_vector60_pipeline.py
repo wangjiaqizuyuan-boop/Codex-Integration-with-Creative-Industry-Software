@@ -10,6 +10,7 @@ from unittest import mock
 from PIL import Image
 
 from starbridge_mcp.vectorization.vector60 import geometry_processor
+from starbridge_mcp.vectorization.vector60 import pipeline as vector60_pipeline
 from starbridge_mcp.vectorization.vector60.geometry_backend import (
     geometry_dependencies_available,
 )
@@ -205,6 +206,90 @@ class Vector60PipelineTests(unittest.TestCase):
         self.assertTrue(unsafe.fallback_used)
         self.assertEqual(unsafe.svg_path, self.baseline)
         self.assertEqual(unsafe.report.fallback_reason, "pipeline_stage_failed")
+
+    def test_early_stage_failures_return_artisan_baseline(self) -> None:
+        for target in ("_classification", "build_candidate_matrix", "preprocess_for_scene"):
+            with self.subTest(target=target):
+                staging = self.root / target
+                staging.mkdir()
+                with mock.patch.object(
+                    vector60_pipeline,
+                    target,
+                    side_effect=RuntimeError("sensitive stage failure"),
+                ):
+                    result = run_vector60_pipeline(
+                        reference=self.reference,
+                        candidate_source=self.reference,
+                        baseline_svg=self.baseline,
+                        staging_dir=staging,
+                        scene_preset="flat",
+                        candidate_limit=2,
+                        candidate_generator=self.generator,
+                        svg_optimizer=self.optimizer,
+                    )
+
+                self.assertTrue(result.fallback_used)
+                self.assertEqual(result.svg_path, self.baseline)
+                self.assertEqual(result.report.fallback_reason, "pipeline_stage_failed")
+                public_report = json.dumps(result.report.as_public_dict())
+                self.assertNotIn("sensitive", public_report)
+
+    def test_orchestrator_fallback_does_not_retry_failed_classifier_or_matrix(self) -> None:
+        with (
+            mock.patch.object(
+                vector60_pipeline,
+                "_classification",
+                side_effect=RuntimeError("classifier failed"),
+            ) as classifier,
+            mock.patch.object(
+                vector60_pipeline,
+                "build_candidate_matrix",
+                side_effect=RuntimeError("matrix failed"),
+            ) as matrix,
+            mock.patch.object(
+                vector60_pipeline,
+                "validate_scene",
+                side_effect=RuntimeError("scene validation failed"),
+            ) as scene_validation,
+        ):
+            result = vector60_pipeline.fallback_to_artisan_baseline(
+                reference=self.reference,
+                candidate_source=self.reference,
+                baseline_svg=self.baseline,
+                staging_dir=self.root,
+                scene_preset="logo",
+            )
+
+        classifier.assert_not_called()
+        matrix.assert_not_called()
+        scene_validation.assert_not_called()
+        self.assertTrue(result.fallback_used)
+        self.assertEqual(result.svg_path, self.baseline)
+        self.assertEqual(result.report.scene, "logo")
+        self.assertEqual(result.report.candidate_count, 1)
+
+    def test_report_write_failure_returns_baseline_with_safe_warning(self) -> None:
+        with mock.patch.object(
+            vector60_pipeline,
+            "write_report",
+            side_effect=OSError("sensitive report failure"),
+        ):
+            result = run_vector60_pipeline(
+                reference=self.reference,
+                candidate_source=self.reference,
+                baseline_svg=self.baseline,
+                staging_dir=self.root,
+                scene_preset="logo",
+                candidate_limit=2,
+                candidate_generator=self.generator,
+                svg_optimizer=self.optimizer,
+            )
+
+        self.assertTrue(result.fallback_used)
+        self.assertEqual(result.svg_path, self.baseline)
+        self.assertIn("report_write_failed", result.report.warning_codes)
+        public_report = json.dumps(result.report.as_public_dict())
+        self.assertNotIn("sensitive", public_report)
 
 
 if __name__ == "__main__":

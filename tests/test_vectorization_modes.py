@@ -450,6 +450,34 @@ class DesignVectorizationModeTests(VectorizationModeTests):
         self.assertNotIn(source.name, report_text)
         self.assertNotIn("token", report_text)
 
+    def test_artisan_auto_enhance_classifier_failure_publishes_baseline(self) -> None:
+        source = self.make_design_source()
+        source_bytes = source.read_bytes()
+
+        with mock.patch(
+            "starbridge_mcp.vectorization.vector60.pipeline._classification",
+            side_effect=RuntimeError("C:/private/customer-token-cookie.png"),
+        ):
+            result = run_vectorization(
+                RunConfig(
+                    input_path=str(source),
+                    mode="artisan",
+                    reference_id="vector60-classifier-fallback",
+                    auto_enhance=True,
+                    scene_preset="flat",
+                )
+            )
+
+        output = self.output_root / "vector60-classifier-fallback" / "artisan"
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["vector60"]["status"], "artisan_baseline_fallback")
+        self.assertEqual(result["vector60"]["candidate_count"], 1)
+        self.assertEqual(
+            (output / "vector.svg").read_bytes(),
+            (output / "artisan_baseline.svg").read_bytes(),
+        )
+        self.assertEqual(source_bytes, source.read_bytes())
+
     def test_artisan_adaptive_failure_retains_published_baseline(self) -> None:
         source = self.make_design_source()
 

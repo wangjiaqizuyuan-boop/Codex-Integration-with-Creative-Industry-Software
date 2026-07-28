@@ -16,7 +16,13 @@ from .candidate_matrix import CandidateConfig, build_candidate_matrix
 from .geometry_processor import process_svg_geometry
 from .preprocess import preprocess_for_scene
 from .report import RenderMetrics, Vector60Report, write_report
-from .scene_classifier import SceneClassification, classify_scene, validate_scene
+from .scene_classifier import (
+    SUPPORTED_SCENES,
+    SceneClassification,
+    SceneFeatures,
+    classify_scene,
+    validate_scene,
+)
 from .scorer import (
     CandidateScore,
     QualityGates,
@@ -287,6 +293,26 @@ def _classification(image: Image.Image, scene_preset: str | None) -> SceneClassi
     )
 
 
+def _fallback_classification(scene_preset: str | None) -> SceneClassification:
+    scene = scene_preset if scene_preset in SUPPORTED_SCENES else "illustration"
+    return SceneClassification(
+        scene=scene,
+        confidence=0.0,
+        reasons=("classification_unavailable",),
+        features=SceneFeatures(
+            quantized_color_count=0,
+            color_entropy=0.0,
+            dominant_color_ratio=0.0,
+            low_saturation_ratio=0.0,
+            mean_saturation=0.0,
+            edge_density=0.0,
+            high_frequency_ratio=0.0,
+            luminance_range=0.0,
+            transparent_ratio=0.0,
+        ),
+    )
+
+
 def _report_metrics(score: CandidateScore) -> RenderMetrics:
     return RenderMetrics(
         ssim=score.visual.ssim,
@@ -375,7 +401,20 @@ def _fallback_result(
         final_render_scored=score is not None,
         warning_codes=tuple(dict.fromkeys(warning_codes)),
     )
-    write_report(staging_dir, report)
+    try:
+        write_report(staging_dir, report)
+    except Exception:
+        report = Vector60Report(
+            scene=report.scene,
+            status=report.status,
+            candidate_count=report.candidate_count,
+            selected_candidate=report.selected_candidate,
+            metrics=report.metrics,
+            fallback_reason=report.fallback_reason,
+            safety_verified=report.safety_verified,
+            final_render_scored=report.final_render_scored,
+            warning_codes=(*report.warning_codes, "report_write_failed"),
+        )
     return Vector60PipelineResult(
         svg_path=baseline_svg,
         render_path=render_path,
@@ -402,10 +441,24 @@ def run_vector60_pipeline(
 ) -> Vector60PipelineResult:
     """Run Vector60 and return the verified Artisan baseline on every stage failure."""
 
-    classification = _classification(reference, scene_preset)
-    matrix = build_candidate_matrix(classification.scene, limit=candidate_limit)
     warnings: list[str] = []
     expected_width, expected_height = candidate_source.size
+    try:
+        classification = _classification(reference, scene_preset)
+        matrix = build_candidate_matrix(classification.scene, limit=candidate_limit)
+    except Exception:
+        return _fallback_result(
+            baseline_svg=baseline_svg,
+            staging_dir=staging_dir,
+            reference=reference,
+            expected_width=expected_width,
+            expected_height=expected_height,
+            classification=_fallback_classification(scene_preset),
+            candidate_count=1,
+            reason="pipeline_stage_failed",
+            warning_codes=("high_quality_not_claimed",),
+            detail_protection=detail_protection,
+        )
     fallback_arguments = {
         "baseline_svg": baseline_svg,
         "staging_dir": staging_dir,
@@ -558,16 +611,14 @@ def fallback_to_artisan_baseline(
 ) -> Vector60PipelineResult:
     """Create a safe report and render when the orchestrator itself fails unexpectedly."""
 
-    classification = _classification(reference, scene_preset)
-    candidate_count = len(build_candidate_matrix(classification.scene).candidates)
     return _fallback_result(
         baseline_svg=baseline_svg,
         staging_dir=staging_dir,
         reference=reference,
         expected_width=candidate_source.width,
         expected_height=candidate_source.height,
-        classification=classification,
-        candidate_count=candidate_count,
+        classification=_fallback_classification(scene_preset),
+        candidate_count=1,
         reason="pipeline_stage_failed",
         warning_codes=("high_quality_not_claimed",),
         detail_protection=detail_protection,
