@@ -19,3 +19,5 @@
 probe 只访问配置的回环 HTTP 地址；服务不存在时结构化失败且不请求 `/prompt`。提示词、模型名和完整 workflow 只保存在有期限、有容量上限的进程内保险库；持久化 plan 与 Evidence 只记录参数摘要、workflow hash、basename、SHA-256 和受控相对路径。证据不得保存提示词中的客户机密、模型真实路径、token、账号状态或生成图片内容。未经一次性确认不得请求 `/prompt`；提交状态不明时不得自动重复提交。
 
 `collect-results` 只登记 PNG、JPEG、WebP 或 GIF。下载内容必须同时通过格式签名、完整尾标和扩展名匹配检查；HTML 错误页、空内容、截断文件、伪造扩展名或其他格式均返回 `comfyui_output_fetch_failed`，不得写入 Project artifacts 或 Evidence。多图结果按一个登记批次处理：任一后续图片下载、校验、写入或登记失败时，必须删除本批次已经写入的文件；如果清理本身失败，则升级为 `comfyui_output_rollback_failed`，不得把部分结果报告为成功。这一道门只验证产物类型与基本完整性，不把模拟回环测试描述成真实桌面 ComfyUI 验收。
+
+提交与产物收集必须复用同一个已校验的 ComfyUI 回环 origin。用户明确配置非默认端口时，`submit-generation` 只把不含账号、路径、query 或 fragment 的回环 origin 写入本地 job runtime 状态；敏感运行输入销毁后，`collect-results` 仍使用该 origin 查询同一 `prompt_id` 并从 `/view` 下载真实图片字节。旧任务没有此字段时继续使用环境变量或默认 `http://127.0.0.1:8188`。持久化字段如果不再满足回环 URL 约束，收集步骤结构化失败且不发起网络请求。

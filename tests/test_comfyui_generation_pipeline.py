@@ -3,7 +3,9 @@ from __future__ import annotations
 import io
 import json
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from PIL import Image
@@ -13,7 +15,7 @@ from starbridge_mcp.adapters.comfyui import ComfyUiAdapter, RuntimeInputVault
 from starbridge_mcp.adapters.comfyui.adapter import _validate_generated_image_payload
 from starbridge_mcp.core.app_data import resolve_app_data_paths
 from starbridge_mcp.domain.models import WorkflowStep
-from starbridge_mcp.storage.atomic_json import atomic_write_json
+from starbridge_mcp.storage.atomic_json import atomic_write_json, read_json
 from starbridge_mcp.storage.evidence_store import EvidenceStore
 from starbridge_mcp.storage.job_store import JobStore
 from starbridge_mcp.storage.project_store import ProjectStore
@@ -258,6 +260,160 @@ class ComfyUiGenerationPipelineTests(unittest.TestCase):
         self.assertEqual("comfyui_output_fetch_failed", result.error.code if result.error else None)
         self.assertEqual((), result.artifacts)
         self.assertEqual([], artifact_files)
+
+    def test_custom_loopback_origin_survives_submit_and_collects_real_bytes(self) -> None:
+        image_buffer = io.BytesIO()
+        Image.new("RGB", (8, 8), (12, 34, 56)).save(image_buffer, format="PNG")
+        output_bytes = image_buffer.getvalue()
+        requests: list[str] = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, _format: str, *args: object) -> None:
+                return
+
+            def do_GET(self) -> None:
+                requests.append(self.path)
+                if self.path == "/history/prompt-test":
+                    payload = json.dumps(
+                        {
+                            "prompt-test": {
+                                "status": {"status_str": "success", "completed": True},
+                                "outputs": {
+                                    "9": {
+                                        "images": [
+                                            {
+                                                "filename": "generated.png",
+                                                "subfolder": "",
+                                                "type": "output",
+                                            }
+                                        ]
+                                    }
+                                },
+                            }
+                        }
+                    ).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
+                if self.path.startswith("/view?"):
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(output_bytes)))
+                    self.end_headers()
+                    self.wfile.write(output_bytes)
+                    return
+                self.send_error(404)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                paths = resolve_app_data_paths(Path(directory))
+                vault = RuntimeInputVault()
+                runtime_inputs = job_inputs()
+                runtime_inputs["comfyUrl"] = f"http://127.0.0.1:{server.server_port}"
+                runtime_ref = vault.put(runtime_inputs)
+                adapter = ComfyUiAdapter(
+                    vault,
+                    agent_runner=lambda _arguments: {
+                        "ok": True,
+                        "submitted": True,
+                        "prompt_id": "prompt-test",
+                        "job_status": {"state": "completed"},
+                        "warnings": [],
+                    },
+                )
+                submit_context = AdapterContext(
+                    job_id="job-custom-origin",
+                    project_id="project-custom-origin",
+                    workflow_id=WORKFLOW_ID,
+                    step=WorkflowStep(
+                        step_id="submit-generation",
+                        adapter="comfyui",
+                        input_data={
+                            "operation": "submit-generation",
+                            "runtimeInputRef": runtime_ref,
+                        },
+                    ),
+                    app_paths=paths,
+                    cancellation=CancellationToken(),
+                )
+                atomic_write_json(
+                    adapter._state_path(submit_context),
+                    {"schemaVersion": 1, "validationOk": True, "submitted": False},
+                )
+
+                submitted = adapter.execute(submit_context)
+                persisted = read_json(adapter._state_path(submit_context))
+                collect_context = AdapterContext(
+                    job_id=submit_context.job_id,
+                    project_id=submit_context.project_id,
+                    workflow_id=WORKFLOW_ID,
+                    step=WorkflowStep(
+                        step_id="collect-results",
+                        adapter="comfyui",
+                        input_data={"operation": "collect-results"},
+                    ),
+                    app_paths=paths,
+                    cancellation=CancellationToken(),
+                )
+                collected = adapter.execute(collect_context)
+                artifact_path = paths.root / collected.artifacts[0].relative_path
+                artifact_bytes = artifact_path.read_bytes()
+        finally:
+            server.shutdown()
+            server.server_close()
+            server_thread.join(timeout=5)
+
+        self.assertEqual("completed", submitted.status)
+        self.assertEqual(f"http://127.0.0.1:{server.server_port}", persisted["comfyUiOrigin"])
+        self.assertEqual("completed", collected.status)
+        self.assertEqual(output_bytes, artifact_bytes)
+        self.assertIn("/history/prompt-test", requests)
+        self.assertTrue(any(path.startswith("/view?") for path in requests))
+
+    def test_invalid_persisted_origin_stops_before_network_access(self) -> None:
+        result_reads = 0
+
+        def read_result(_arguments: dict[str, object]) -> dict[str, object]:
+            nonlocal result_reads
+            result_reads += 1
+            return {}
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = resolve_app_data_paths(Path(directory))
+            adapter = ComfyUiAdapter(RuntimeInputVault(), result_reader=read_result)
+            context = AdapterContext(
+                job_id="job-invalid-origin",
+                project_id="project-invalid-origin",
+                workflow_id=WORKFLOW_ID,
+                step=WorkflowStep(
+                    step_id="collect-results",
+                    adapter="comfyui",
+                    input_data={"operation": "collect-results"},
+                ),
+                app_paths=paths,
+                cancellation=CancellationToken(),
+            )
+            atomic_write_json(
+                adapter._state_path(context),
+                {
+                    "schemaVersion": 1,
+                    "submitted": True,
+                    "promptId": "prompt-test",
+                    "comfyUiOrigin": "http://example.invalid:8188",
+                },
+            )
+
+            result = adapter.execute(context)
+
+        self.assertEqual("failed", result.status)
+        self.assertEqual("comfyui_origin_invalid", result.error.code if result.error else None)
+        self.assertEqual(0, result_reads)
 
     def test_unavailable_service_soft_fails_without_prompt_submission(self) -> None:
         submit_calls = 0

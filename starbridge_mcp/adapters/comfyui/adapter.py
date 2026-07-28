@@ -337,6 +337,7 @@ class ComfyUiAdapter(CreativeAdapter):
     def _submit(self, context: AdapterContext) -> AdapterResult:
         inputs = self._runtime_inputs(context)
         assert inputs is not None
+        comfyui_origin = self._base_url(inputs)
         arguments = self._safe_arguments(inputs, context)
         arguments["confirm_run"] = True
         try:
@@ -370,6 +371,7 @@ class ComfyUiAdapter(CreativeAdapter):
                 "submitted": True,
                 "promptId": prompt_id,
                 "promptIdHash": prompt_id_hash,
+                "comfyUiOrigin": comfyui_origin,
                 "lastKnownState": state,
             },
         )
@@ -413,7 +415,22 @@ class ComfyUiAdapter(CreativeAdapter):
                     code="comfyui_prompt_id_missing", message="ComfyUI 提交标识不可用。"
                 ),
             )
-        base_url = self._base_url()
+        persisted_origin = state_payload.get("comfyUiOrigin")
+        try:
+            base_url = (
+                validate_loopback_url(persisted_origin)
+                if isinstance(persisted_origin, str)
+                else self._base_url()
+            )
+        except ValueError:
+            return AdapterResult(
+                status="failed",
+                error=JobError(
+                    code="comfyui_origin_invalid",
+                    message="ComfyUI 提交地址不再满足本机回环安全约束。",
+                    next_steps=("重新建立任务并再次确认本机 ComfyUI 地址。",),
+                ),
+            )
         result = self.result_reader(
             {"prompt_id": prompt_id, "comfy_url": base_url, "timeout": 5, "wait_seconds": 0}
         )
@@ -507,6 +524,7 @@ class ComfyUiAdapter(CreativeAdapter):
                 "schemaVersion": 1,
                 "submitted": True,
                 "promptIdHash": state_payload.get("promptIdHash"),
+                "comfyUiOrigin": base_url,
                 "lastKnownState": "completed",
                 "outputCount": len(artifacts),
                 "artifactHashes": [artifact.sha256 for artifact in artifacts],
