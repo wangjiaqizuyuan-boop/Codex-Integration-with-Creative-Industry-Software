@@ -108,6 +108,15 @@ class Vector60RuntimePackagingTest(unittest.TestCase):
         self.assertRegex(
             workflow,
             re.compile(
+                r"(?s)- name: Prepare Tauri test resources.*?"
+                r"starbridge-sidecar-x86_64-pc-windows-msvc\.exe.*?"
+                r"cargo test --manifest-path.*?"
+                r"Build-Sidecar\.ps1"
+            ),
+        )
+        self.assertRegex(
+            workflow,
+            re.compile(
                 r"(?s)- name: Upload short-lived internal test artifact\s+"
                 r"if: github\.event_name == 'workflow_dispatch'\s+"
                 r"uses: actions/upload-artifact@v7"

@@ -57,6 +57,14 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           npm ci --prefix apps/starbridge-desktop
 
+      - name: Prepare Tauri test resources
+        shell: pwsh
+        run: |
+          $sidecarDir = "apps/starbridge-desktop/src-tauri/binaries"
+          New-Item -ItemType Directory -Force -Path "$sidecarDir/_internal" | Out-Null
+          New-Item -ItemType File -Force -Path "$sidecarDir/_internal/.ci-placeholder" | Out-Null
+          New-Item -ItemType File -Force -Path "$sidecarDir/starbridge-sidecar-x86_64-pc-windows-msvc.exe" | Out-Null
+
       - name: Verify release metadata and unsigned-only boundary
         shell: pwsh
         run: |
