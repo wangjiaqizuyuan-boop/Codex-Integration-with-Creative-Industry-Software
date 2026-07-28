@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -193,6 +195,111 @@ class AutocadDxfBridge(BaseBridge):
             # outside root or error -> not allowed
             return False
 
+    def _resolve_output_path(self, output: str | Path) -> Path:
+        raw = Path(str(output).replace("\\", "/"))
+        if raw.is_absolute():
+            return raw.resolve()
+        declared_root = Path("examples/cad/output")
+        try:
+            raw = raw.relative_to(declared_root)
+        except ValueError:
+            pass
+        return (self.OUTPUT_ROOT / raw).resolve()
+
+    def _sha256(self, path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _write_and_audit_dxf(
+        self,
+        normalized: dict[str, Any],
+        staging_path: Path,
+    ) -> dict[str, Any]:
+        import ezdxf
+        from ezdxf import units
+
+        document = ezdxf.new("R2010", setup=True)
+        document.units = {
+            "mm": units.MM,
+            "cm": units.CM,
+            "m": units.M,
+            "inch": units.IN,
+        }.get(normalized.get("units"), units.MM)
+
+        for layer in normalized.get("layers", []):
+            name = layer["name"]
+            color = layer["color"]
+            if document.layers.has_entry(name):
+                document.layers.get(name).dxf.color = color
+            else:
+                document.layers.add(name=name, color=color)
+
+        modelspace = document.modelspace()
+        for entity in normalized.get("entities", []):
+            attributes = {"layer": entity.get("layer", "0")}
+            entity_type = entity["type"]
+            if entity_type == "line":
+                modelspace.add_line(
+                    entity["start"],
+                    entity["end"],
+                    dxfattribs=attributes,
+                )
+            elif entity_type == "polyline":
+                modelspace.add_lwpolyline(
+                    entity["points"],
+                    close=entity.get("closed", False),
+                    dxfattribs=attributes,
+                )
+            elif entity_type == "circle":
+                modelspace.add_circle(
+                    entity["center"],
+                    entity["radius"],
+                    dxfattribs=attributes,
+                )
+            elif entity_type == "rectangle":
+                x = entity["x"]
+                y = entity["y"]
+                width = entity["width"]
+                height = entity["height"]
+                modelspace.add_lwpolyline(
+                    [
+                        (x, y),
+                        (x + width, y),
+                        (x + width, y + height),
+                        (x, y + height),
+                    ],
+                    close=True,
+                    dxfattribs=attributes,
+                )
+            elif entity_type == "text":
+                modelspace.add_text(
+                    entity["value"],
+                    height=entity["height"],
+                    dxfattribs=attributes,
+                ).set_placement(entity["position"])
+
+        preflight_auditor = document.audit()
+        if preflight_auditor.has_errors:
+            raise ValueError("generated DXF failed pre-write audit")
+        document.saveas(staging_path)
+
+        readback = ezdxf.readfile(staging_path)
+        readback_auditor = readback.audit()
+        entity_count = len(readback.modelspace())
+        expected_count = len(normalized.get("entities", []))
+        if readback_auditor.has_errors or entity_count != expected_count:
+            raise ValueError("generated DXF failed readback verification")
+        return {
+            "readback_ok": True,
+            "audit_errors": len(readback_auditor.errors),
+            "audit_fixes": len(readback_auditor.fixes),
+            "entity_count": entity_count,
+            "expected_entity_count": expected_count,
+        }
+
     def _entity_points(self, entity: dict[str, Any]) -> list[list[float]]:
         entity_type = entity.get("type")
         if entity_type == "line":
@@ -284,13 +391,18 @@ class AutocadDxfBridge(BaseBridge):
 
         if output is None:
             output = "example.dxf"
-        out_path = (self.OUTPUT_ROOT / output).resolve()
+        out_path = self._resolve_output_path(output)
 
-        if not dry_run and not self._output_is_allowed(out_path):
+        if not dry_run and (
+            not self._output_is_allowed(out_path) or out_path.suffix.lower() != ".dxf"
+        ):
             return self._result(
                 ok=False,
                 action="write_dxf",
-                message="Output path is outside the allowed sandbox (examples/cad/output).",
+                message=(
+                    "Output must be one .dxf file inside the allowed sandbox "
+                    "(examples/cad/output)."
+                ),
                 details={"output_path": str(out_path)},
                 warnings=["Only outputs under examples/cad/output are allowed for real writes."],
                 next_steps=["Use a path inside the sandbox or dry_run=True."],
@@ -323,20 +435,103 @@ class AutocadDxfBridge(BaseBridge):
                 next_steps=["pip install ezdxf"],
             )
 
-        # real write would go here
-        manifest = self._manifest_for(normalized, out_path, summary)
-        return self._result(
-            ok=True,
-            action="write_dxf",
-            message="DXF written (simulated in this version).",
-            details={
-                "dry_run": False,
-                "output_path": str(out_path),
-                "manifest": manifest,
-                "summary": summary,
-                "confirm_write": confirm_write,
-            },
-        )
+        manifest_path = out_path.with_suffix(".manifest.json")
+        staging_dxf = out_path.with_name(f".{out_path.name}.staging")
+        staging_manifest = manifest_path.with_name(f".{manifest_path.name}.staging")
+        if any(
+            path.exists() or path.is_symlink()
+            for path in (out_path, manifest_path, staging_dxf, staging_manifest)
+        ):
+            return self._result(
+                ok=False,
+                action="write_dxf",
+                message="DXF output batch already exists; refusing to overwrite it.",
+                details={
+                    "dry_run": False,
+                    "status": "output_batch_exists",
+                    "confirm_write": confirm_write,
+                },
+                warnings=["Choose a new output name; existing files are preserved."],
+                next_steps=["Use a unique .dxf filename inside examples/cad/output."],
+            )
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        promoted_dxf = False
+        promoted_manifest = False
+        try:
+            verification = self._write_and_audit_dxf(normalized, staging_dxf)
+            dxf_artifact = {
+                "role": "cad_drawing",
+                "relative_path": out_path.relative_to(self.OUTPUT_ROOT.resolve()).as_posix(),
+                "media_type": "image/vnd.dxf",
+                "size_bytes": staging_dxf.stat().st_size,
+                "sha256": self._sha256(staging_dxf),
+            }
+            manifest = {
+                "schema_version": "1.0",
+                "bridge": self.bridge_id,
+                "action": "write_dxf",
+                "state": "completed",
+                "artifact": dxf_artifact,
+                "plan_summary": summary,
+                "verification": verification,
+            }
+            staging_manifest.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            staging_dxf.replace(out_path)
+            promoted_dxf = True
+            staging_manifest.replace(manifest_path)
+            promoted_manifest = True
+
+            manifest_artifact = {
+                "role": "generation_manifest",
+                "relative_path": manifest_path.relative_to(
+                    self.OUTPUT_ROOT.resolve()
+                ).as_posix(),
+                "media_type": "application/json",
+                "size_bytes": manifest_path.stat().st_size,
+                "sha256": self._sha256(manifest_path),
+            }
+            return self._result(
+                ok=True,
+                action="write_dxf",
+                message="DXF generated, read back, and audited.",
+                details={
+                    "dry_run": False,
+                    "state": "completed",
+                    "terminal": True,
+                    "result_ready": True,
+                    "confirm_write": confirm_write,
+                    "artifacts": [dxf_artifact, manifest_artifact],
+                    "verification": verification,
+                    "summary": summary,
+                },
+            )
+        except (OSError, RuntimeError, ValueError):
+            for path in (staging_dxf, staging_manifest):
+                path.unlink(missing_ok=True)
+            if promoted_manifest:
+                manifest_path.unlink(missing_ok=True)
+            if promoted_dxf:
+                out_path.unlink(missing_ok=True)
+            return self._result(
+                ok=False,
+                action="write_dxf",
+                message="DXF generation failed; the current batch was rolled back.",
+                details={
+                    "dry_run": False,
+                    "state": "failed",
+                    "terminal": True,
+                    "result_ready": False,
+                    "status": "generation_failed",
+                    "confirm_write": confirm_write,
+                },
+                warnings=["No partial output from the current batch was accepted."],
+                next_steps=["Review the validated plan and retry with a new output name."],
+            )
 
 
 # Back-compat module level functions for existing callers

@@ -37,6 +37,7 @@ reports/
 canvas/
 !examples/cad/output/
 !examples/cad/output/.gitkeep
+examples/cad/output/**/*.manifest.json
 **/outputs/
 **/reports/
 scratch/

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from importlib.util import find_spec
 from pathlib import Path
 
 import starbridge_mcp.bridges.autocad_dxf as autocad_dxf
@@ -139,6 +140,40 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             self.assertFalse(result["ok"])
             self.assertFalse(output.exists())
 
+    def test_write_dxf_rejects_non_dxf_inside_sandbox(self) -> None:
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "blocked.txt"
+            try:
+                result = write_dxf(
+                    minimal_plan(),
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assert_schema(result, "write_dxf")
+            self.assertFalse(result["ok"])
+            self.assertFalse(output.exists())
+
+    def test_declared_sandbox_prefix_is_not_duplicated(self) -> None:
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            try:
+                resolved = bridge._resolve_output_path(
+                    "examples/cad/output/prefixed.dxf"
+                )
+            finally:
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assertEqual((Path(tmp) / "prefixed.dxf").resolve(), resolved)
+
     def test_write_dxf_reports_unavailable_without_ezdxf(self) -> None:
         original = autocad_dxf._ezdxf_available
         autocad_dxf._ezdxf_available = lambda: False
@@ -151,6 +186,71 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual("unavailable", result["details"]["status"])
         self.assertFalse(output.exists())
+
+    @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
+    def test_confirmed_write_creates_audited_dxf_and_manifest(self) -> None:
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "real_generation.dxf"
+            try:
+                result = write_dxf(
+                    minimal_plan(),
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assert_schema(result, "write_dxf")
+            self.assertTrue(result["ok"])
+            self.assertEqual("completed", result["details"]["state"])
+            self.assertTrue(result["details"]["terminal"])
+            self.assertTrue(result["details"]["result_ready"])
+            self.assertTrue(output.is_file())
+
+            manifest_path = output.with_suffix(".manifest.json")
+            self.assertTrue(manifest_path.is_file())
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual("1.0", manifest["schema_version"])
+            self.assertEqual(0, manifest["verification"]["audit_errors"])
+            self.assertEqual(5, manifest["verification"]["entity_count"])
+            self.assertEqual(2, len(result["details"]["artifacts"]))
+            self.assertTrue(
+                all(item["sha256"] for item in result["details"]["artifacts"])
+            )
+
+            import ezdxf
+
+            document = ezdxf.readfile(output)
+            self.assertFalse(document.audit().has_errors)
+            self.assertEqual(5, len(document.modelspace()))
+
+    @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
+    def test_confirmed_write_never_overwrites_existing_batch(self) -> None:
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "existing.dxf"
+            output.write_text("preserve-me", encoding="utf-8")
+            try:
+                result = write_dxf(
+                    minimal_plan(),
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assert_schema(result, "write_dxf")
+            self.assertFalse(result["ok"])
+            self.assertEqual("output_batch_exists", result["details"]["status"])
+            self.assertEqual("preserve-me", output.read_text(encoding="utf-8"))
+            self.assertFalse(output.with_suffix(".manifest.json").exists())
 
 
 if __name__ == "__main__":
