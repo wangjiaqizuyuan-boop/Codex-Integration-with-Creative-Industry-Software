@@ -32,6 +32,24 @@ MAX_SOURCE_BYTES = 128 * 1024 * 1024
 REFERENCE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 SUPPORTED_FORMATS = {"JPEG", "PNG"}
+PUBLISHED_ARTIFACT_FILENAMES = frozenset(
+    {
+        "adaptive_optimization.json",
+        "artisan_baseline.svg",
+        "artisan_edit_index.json",
+        "artisan_structure.json",
+        "editable_99.json",
+        "error_heatmap.png",
+        "parameters.json",
+        "preview.png",
+        "svg_render.png",
+        "vector.svg",
+        "vector60_report.json",
+        "vector60_report.md",
+        "vector_report.json",
+        "vector_report.md",
+    }
+)
 
 RGBA = tuple[int, int, int, int]
 
@@ -133,6 +151,16 @@ def resolve_output_dir(
             "Output must stay below examples/output/vectorization.",
         )
     return resolved
+
+
+def reject_source_output_collision(source_path: str, output_dir: Path) -> None:
+    source = Path(source_path).resolve()
+    targets = {(output_dir / filename).resolve() for filename in PUBLISHED_ARTIFACT_FILENAMES}
+    if source in targets:
+        raise VectorizationError(
+            "source_output_collision",
+            "Input image conflicts with a vectorization output artifact.",
+        )
 
 
 def load_source(path_value: str, max_pixels: int) -> tuple[Image.Image, dict[str, Any]]:
@@ -1021,6 +1049,7 @@ def run_vectorization(config: RunConfig) -> dict[str, Any]:
         preset.mode,
         output_root=config.output_root,
     )
+    reject_source_output_collision(config.input_path, output_dir)
     source_image, source = load_source(config.input_path, preset.max_source_pixels)
     output_dir.parent.mkdir(parents=True, exist_ok=True)
 

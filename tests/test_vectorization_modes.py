@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from PIL import Image, ImageDraw
+from PIL.PngImagePlugin import PngInfo
 
 from starbridge_mcp.vectorization import (
     RunConfig,
@@ -210,6 +211,34 @@ class VectorizationModeTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, "output_outside_sandbox")
         self.assertFalse(outside.exists())
+
+    def test_rejects_source_collisions_without_modifying_input(self) -> None:
+        for filename in ("preview.png", "svg_render.png", "error_heatmap.png"):
+            with self.subTest(filename=filename):
+                output = self.output_root / filename.removesuffix(".png") / "exact"
+                output.mkdir(parents=True)
+                source = output / filename
+                image = Image.new("RGBA", (3, 2), (12, 34, 56, 255))
+                metadata = PngInfo()
+                metadata.add_text("source_marker", "must-survive")
+                image.save(source, pnginfo=metadata)
+                source_bytes = source.read_bytes()
+                source_mtime_ns = source.stat().st_mtime_ns
+
+                with self.assertRaises(VectorizationError) as raised:
+                    run_vectorization(
+                        RunConfig(
+                            input_path=str(source),
+                            mode="exact",
+                            reference_id="source-collision",
+                            output_dir=str(output),
+                        )
+                    )
+
+                self.assertEqual(raised.exception.code, "source_output_collision")
+                self.assertEqual(source_bytes, source.read_bytes())
+                self.assertEqual(source_mtime_ns, source.stat().st_mtime_ns)
+                self.assertFalse((output / "vector.svg").exists())
 
     def test_trusted_absolute_output_root_keeps_artifacts_inside_app_data(self) -> None:
         source = self.make_exact_source()
