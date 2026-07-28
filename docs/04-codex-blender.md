@@ -11,6 +11,7 @@
 | manifest | `examples/blender_bridge/bridge.json` | 声明状态、入口、支持任务和安全说明 |
 | 环境探针 | `examples/blender_bridge/probe.py` | 检查 Blender 可执行文件、本机配置和公开安全 report |
 | 安全场景计划 | `examples/blender_bridge/scene_plan.py` | 生成固定模板 dry-run 场景计划，不启动 Blender，不打开 `.blend` |
+| 固定场景生成 | `examples/blender_bridge/render_fixed_scene.py` | 默认 dry-run；显式确认后在 Blender 后台生成公开基础场景、预览图和回执 |
 | 参考图重建计划 | `examples/blender_bridge/reference_reconstruction_plan.py` | 生成防幻觉重建 dry-run 计划：先分割/估深/量测，再做同相机渲染误差校验 |
 | 总状态探测 | `examples/bridge_status.py` | 检查 `BLENDER_EXE`、常见安装路径和 `BLENDER_MCP_DIR` |
 
@@ -21,6 +22,27 @@
 - `receipt.json`：记录计划版本和执行结果的脱敏回执。
 
 三项采用原子完成规则：缺少任一产物、哈希缺失或格式不符都必须把整批标记为 `failed`，清理仅限当前批次，不能把部分结果冒充成功。当前实现仍只返回 dry-run 契约，不创建这些文件。
+
+## 固定场景生成闭环
+
+先预览计划，不会启动 Blender 或写文件：
+
+```powershell
+python examples\blender_bridge\render_fixed_scene.py --json
+```
+
+确认后才执行固定模板，输出目录必须位于仓库已忽略的 `output/` 下，且目标批次不能已经存在：
+
+```powershell
+python examples\blender_bridge\render_fixed_scene.py `
+  --confirm-run `
+  --output-dir output/blender/fixed-scene-001 `
+  --json
+```
+
+执行器只向 Blender 传入仓库内已审计脚本，不接受用户 Python、`.blend` 输入、贴图或外部资产。它先写同级临时批次；仅当 `scene.blend`、`preview.png` 和 `receipt.json` 齐全且可验证时才原子移动到最终目录。失败只清理当前临时批次，保留既有成功结果。
+
+如果没有检测到 Blender，命令返回 `blender_not_detected` 结构化错误，不创建目录。本仓库的 CI 只验证 dry-run、路径限制、确认门和失败恢复，不把未安装 Blender 的环境写成真实渲染成功。
 
 ## 需要本机安装什么
 
@@ -47,6 +69,7 @@ npm.cmd run status:probe:json
 python examples\blender_bridge\probe.py
 python examples\bridge_status.py --probe-executables --json
 python examples\blender_bridge\scene_plan.py --json
+python examples\blender_bridge\render_fixed_scene.py --json
 python examples\blender_bridge\reference_reconstruction_plan.py --json
 npm.cmd run blender:reference:plan
 ```
@@ -69,7 +92,7 @@ npm.cmd run blender:reference:plan
 
 ## 不能做什么
 
-- 当前没有发布会启动 Blender 的生成或渲染脚本，不能声称已经能自动建模或渲染。
+- 只有显式 `--confirm-run` 的固定公开场景脚本会启动 Blender；没有本机成功回执时不能声称已经生成或渲染。
 - 不能提交私有 `.blend`、贴图、HDRI、资产库、渲染缓存。
 - 不能提交商业模型、购买素材或客户场景。
 - 不能让 CI 依赖真实安装 Blender。

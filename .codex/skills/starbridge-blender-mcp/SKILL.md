@@ -19,6 +19,7 @@ Read only what is needed:
 - `examples/blender_bridge/`
 - `examples/blender_bridge/probe.py`
 - `examples/blender_bridge/scene_plan.py`
+- `examples/blender_bridge/render_fixed_scene.py`
 - `starbridge_mcp/bridges/blender_safe_scene.py`
 - `tests/test_computer_use_plans.py`
 - `tests/test_tool_registry.py`
@@ -31,6 +32,7 @@ If available and the task is scene safety specific, also use `.codex/skills/blen
 npm.cmd run blender:scene:plan
 python examples\blender_bridge\probe.py --json
 python examples\blender_bridge\scene_plan.py --json
+python examples\blender_bridge\render_fixed_scene.py --json
 python -m starbridge_mcp.server tools --json --safe-only
 python examples\bridge_status.py --json --redact-paths --soft-exit
 python scripts\security_check.py
@@ -44,8 +46,9 @@ Do not require Blender in CI. A missing Blender executable should return a struc
 | --- | --- | --- |
 | Check Blender availability | `blender.environment_probe` | Read-only, no `.blend` open |
 | Build safe scene idea | `blender.scene_plan` | Dry-run JSON plan only |
+| Generate public fixed scene | `render_fixed_scene.py --confirm-run` | Fixed audited template; ignored `output/` child only |
 | Inspect real viewport | Computer Use only if user asks for GUI diagnosis | No private asset scan |
-| Render | future confirmed sandbox recipe | No tracked output, no private textures |
+| Render custom/private scene | future confirmed sandbox recipe | No tracked output, no private textures |
 
 ## Forbidden Work
 
