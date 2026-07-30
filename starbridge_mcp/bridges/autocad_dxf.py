@@ -214,21 +214,158 @@ class AutocadDxfBridge(BaseBridge):
                 digest.update(chunk)
         return digest.hexdigest()
 
+    def _unit_code(self, unit_name: str | None) -> int:
+        from ezdxf import units
+
+        return {
+            "mm": units.MM,
+            "cm": units.CM,
+            "m": units.M,
+            "inch": units.IN,
+        }.get(unit_name, units.MM)
+
+    def _canonical_number(self, value: Any) -> float:
+        number = round(float(value), 9)
+        return 0.0 if number == 0 else number
+
+    def _canonical_point(self, value: Any) -> list[float]:
+        return [
+            self._canonical_number(value[0]),
+            self._canonical_number(value[1]),
+        ]
+
+    def _canonical_plan_content(self, normalized: dict[str, Any]) -> dict[str, Any]:
+        entities = []
+        for entity in normalized.get("entities", []):
+            entity_type = entity["type"]
+            canonical = {
+                "layer": entity.get("layer", "0"),
+            }
+            if entity_type == "line":
+                canonical.update(
+                    type="LINE",
+                    start=self._canonical_point(entity["start"]),
+                    end=self._canonical_point(entity["end"]),
+                )
+            elif entity_type == "polyline":
+                canonical.update(
+                    type="LWPOLYLINE",
+                    points=[self._canonical_point(point) for point in entity["points"]],
+                    closed=bool(entity.get("closed", False)),
+                )
+            elif entity_type == "circle":
+                canonical.update(
+                    type="CIRCLE",
+                    center=self._canonical_point(entity["center"]),
+                    radius=self._canonical_number(entity["radius"]),
+                )
+            elif entity_type == "rectangle":
+                x = entity["x"]
+                y = entity["y"]
+                width = entity["width"]
+                height = entity["height"]
+                canonical.update(
+                    type="LWPOLYLINE",
+                    points=[
+                        self._canonical_point(point)
+                        for point in (
+                            (x, y),
+                            (x + width, y),
+                            (x + width, y + height),
+                            (x, y + height),
+                        )
+                    ],
+                    closed=True,
+                )
+            elif entity_type == "text":
+                canonical.update(
+                    type="TEXT",
+                    position=self._canonical_point(entity["position"]),
+                    height=self._canonical_number(entity["height"]),
+                    value=entity["value"],
+                )
+            entities.append(canonical)
+        return {
+            "units": self._unit_code(normalized.get("units")),
+            "layers": [
+                {"name": layer["name"], "color": int(layer["color"])}
+                for layer in normalized.get("layers", [])
+            ],
+            "entities": entities,
+        }
+
+    def _canonical_readback_content(
+        self,
+        document: Any,
+        normalized: dict[str, Any],
+    ) -> dict[str, Any]:
+        layers = []
+        for expected in normalized.get("layers", []):
+            name = expected["name"]
+            if not document.layers.has_entry(name):
+                raise ValueError("generated DXF is missing an expected layer")
+            layers.append(
+                {
+                    "name": name,
+                    "color": int(document.layers.get(name).dxf.color),
+                }
+            )
+
+        entities = []
+        for entity in document.modelspace():
+            entity_type = entity.dxftype()
+            canonical = {
+                "type": entity_type,
+                "layer": entity.dxf.get("layer", "0"),
+            }
+            if entity_type == "LINE":
+                canonical.update(
+                    start=self._canonical_point(entity.dxf.start),
+                    end=self._canonical_point(entity.dxf.end),
+                )
+            elif entity_type == "LWPOLYLINE":
+                canonical.update(
+                    points=[self._canonical_point(point) for point in entity.get_points("xy")],
+                    closed=bool(entity.closed),
+                )
+            elif entity_type == "CIRCLE":
+                canonical.update(
+                    center=self._canonical_point(entity.dxf.center),
+                    radius=self._canonical_number(entity.dxf.radius),
+                )
+            elif entity_type == "TEXT":
+                canonical.update(
+                    position=self._canonical_point(entity.dxf.insert),
+                    height=self._canonical_number(entity.dxf.height),
+                    value=entity.dxf.text,
+                )
+            else:
+                raise ValueError("generated DXF contains an unexpected entity type")
+            entities.append(canonical)
+        return {
+            "units": int(document.units),
+            "layers": layers,
+            "entities": entities,
+        }
+
+    def _content_sha256(self, content: dict[str, Any]) -> str:
+        payload = json.dumps(
+            content,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
     def _write_and_audit_dxf(
         self,
         normalized: dict[str, Any],
         staging_path: Path,
     ) -> dict[str, Any]:
         import ezdxf
-        from ezdxf import units
 
         document = ezdxf.new("R2010", setup=True)
-        document.units = {
-            "mm": units.MM,
-            "cm": units.CM,
-            "m": units.M,
-            "inch": units.IN,
-        }.get(normalized.get("units"), units.MM)
+        document.units = self._unit_code(normalized.get("units"))
 
         for layer in normalized.get("layers", []):
             name = layer["name"]
@@ -293,12 +430,20 @@ class AutocadDxfBridge(BaseBridge):
         expected_count = len(normalized.get("entities", []))
         if readback_auditor.has_errors or entity_count != expected_count:
             raise ValueError("generated DXF failed readback verification")
+        expected_content_sha256 = self._content_sha256(self._canonical_plan_content(normalized))
+        readback_content_sha256 = self._content_sha256(
+            self._canonical_readback_content(readback, normalized)
+        )
+        if readback_content_sha256 != expected_content_sha256:
+            raise ValueError("generated DXF content does not match the approved plan")
         return {
             "readback_ok": True,
             "audit_errors": len(readback_auditor.errors),
             "audit_fixes": len(readback_auditor.fixes),
             "entity_count": entity_count,
             "expected_entity_count": expected_count,
+            "content_match": True,
+            "content_sha256": readback_content_sha256,
         }
 
     def _verify_svg_preview(self, path: Path) -> dict[str, Any]:

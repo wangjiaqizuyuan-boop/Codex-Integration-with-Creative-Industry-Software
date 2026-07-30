@@ -217,6 +217,11 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             self.assertEqual("1.0", manifest["schema_version"])
             self.assertEqual(0, manifest["verification"]["audit_errors"])
             self.assertEqual(5, manifest["verification"]["entity_count"])
+            self.assertTrue(manifest["verification"]["content_match"])
+            self.assertRegex(
+                manifest["verification"]["content_sha256"],
+                r"^[0-9a-f]{64}$",
+            )
             self.assertEqual(2, len(manifest["artifacts"]))
             self.assertTrue(manifest["preview_verification"]["verified"])
             self.assertGreater(manifest["preview_verification"]["path_count"], 0)
@@ -306,6 +311,43 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                 )
             finally:
                 bridge._verify_svg_preview = original_verify
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assert_schema(result, "write_dxf")
+            self.assertFalse(result["ok"])
+            self.assertEqual("generation_failed", result["details"]["status"])
+            self.assertFalse(output.exists())
+            self.assertFalse(output.with_suffix(".preview.svg").exists())
+            self.assertFalse(output.with_suffix(".manifest.json").exists())
+            self.assertEqual([], list(Path(tmp).glob(".*.staging")))
+
+    @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
+    def test_readback_geometry_mismatch_rolls_back_current_batch(self) -> None:
+        import ezdxf
+
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        original_readfile = ezdxf.readfile
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "rollback_geometry.dxf"
+
+            def tampered_readfile(path: Path):
+                document = original_readfile(path)
+                line = next(iter(document.modelspace().query("LINE")))
+                line.dxf.end = (999, 999)
+                return document
+
+            ezdxf.readfile = tampered_readfile
+            try:
+                result = write_dxf(
+                    minimal_plan(),
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                ezdxf.readfile = original_readfile
                 bridge.OUTPUT_ROOT = original_root
 
             self.assert_schema(result, "write_dxf")
