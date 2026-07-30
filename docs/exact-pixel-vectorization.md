@@ -38,6 +38,8 @@ examples/output/illustrator/exact-pixel/<reference-id>/
   exact_pixel_vector.report.json
 ```
 
+SVG 与 report 会先在同一文件系统的隐藏 staging 目录中完成生成和校验，再把整个目录一次性交付。目标批次已存在时返回 `output_batch_exists`，不会覆盖旧 SVG 或 report；发布失败时清理本轮 staging，若清理也失败则返回 `output_rollback_failed`。因此只有完整的双产物批次会出现在最终目录。
+
 桌面 `.ai` 交付只在用户明确要求时执行。源图、SVG、AI 和 report 都不能提交到 GitHub。
 
 ## 已完成的本机写入摘要

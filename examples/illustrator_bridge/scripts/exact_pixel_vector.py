@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
+import shutil
 import tempfile
 from collections import defaultdict
 from pathlib import Path
@@ -148,6 +148,21 @@ def write_svg(
         stream.write("</svg>\n")
 
 
+def publish_batch(staging: Path, output_dir: Path) -> None:
+    if output_dir.exists() or output_dir.is_symlink():
+        raise ExactVectorError(
+            "output_batch_exists",
+            "Output batch already exists; choose a new reference id.",
+        )
+    try:
+        staging.rename(output_dir)
+    except OSError as exc:
+        raise ExactVectorError(
+            "output_publish_failed",
+            "Exact vector batch could not be published atomically.",
+        ) from exc
+
+
 def run_exact_vector(args: argparse.Namespace) -> dict[str, Any]:
     if not REFERENCE_ID.fullmatch(args.reference_id):
         raise ExactVectorError(
@@ -155,14 +170,17 @@ def run_exact_vector(args: argparse.Namespace) -> dict[str, Any]:
             "Reference id must use lowercase letters, digits, underscore, or hyphen.",
         )
     output_dir = resolve_output_dir(args.output_dir, args.reference_id)
+    if output_dir.exists() or output_dir.is_symlink():
+        raise ExactVectorError(
+            "output_batch_exists",
+            "Output batch already exists; choose a new reference id.",
+        )
     image, source = load_source(args.input, args.max_pixels)
     paths, run_count = build_paths(image, args.max_subpaths)
     output_dir.parent.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory(
-        prefix=".exact-pixel-staging-", dir=output_dir.parent
-    ) as temporary_dir:
-        staging = Path(temporary_dir)
+    staging = Path(tempfile.mkdtemp(prefix=".exact-pixel-staging-", dir=output_dir.parent))
+    try:
         staged_svg = staging / "exact_pixel_vector.svg"
         write_svg(staged_svg, source["width"], source["height"], paths)
         try:
@@ -192,6 +210,12 @@ def run_exact_vector(args: argparse.Namespace) -> dict[str, Any]:
                 **evidence,
                 "path": repo_relative(output_dir / "exact_pixel_vector.svg"),
             },
+            "delivery": {
+                "state": "completed",
+                "atomic_batch": True,
+                "overwritten": False,
+                "artifact_count": 2,
+            },
             "illustrator_handoff": {
                 "action": "Open exact_pixel_vector.svg in Illustrator and Save As .ai.",
                 "image_trace_required": False,
@@ -203,9 +227,16 @@ def run_exact_vector(args: argparse.Namespace) -> dict[str, Any]:
             json.dumps(report, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
-        output_dir.mkdir(parents=True, exist_ok=True)
-        os.replace(staged_svg, output_dir / staged_svg.name)
-        os.replace(staged_report, output_dir / staged_report.name)
+        publish_batch(staging, output_dir)
+    finally:
+        if staging.exists():
+            try:
+                shutil.rmtree(staging)
+            except OSError as exc:
+                raise ExactVectorError(
+                    "output_rollback_failed",
+                    "Exact vector staging could not be cleaned after a failed batch.",
+                ) from exc
     return report
 
 

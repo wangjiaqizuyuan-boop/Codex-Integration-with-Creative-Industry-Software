@@ -102,6 +102,15 @@ class ExactPixelVectorTests(unittest.TestCase):
         self.assertNotIn("<image", svg_text)
         self.assertNotIn("data:image", svg_text)
         self.assertTrue(report_path.is_file())
+        self.assertEqual(
+            {
+                "state": "completed",
+                "atomic_batch": True,
+                "overwritten": False,
+                "artifact_count": 2,
+            },
+            result["delivery"],
+        )
 
     def test_reports_are_deterministic_and_do_not_leak_private_input_names(self) -> None:
         source = self.make_source()
@@ -129,6 +138,35 @@ class ExactPixelVectorTests(unittest.TestCase):
             exact.run_exact_vector(complex_args)
         self.assertEqual(complex_error.exception.code, "vector_too_complex")
         self.assertFalse((self.sandbox / "too-complex").exists())
+
+    def test_existing_batch_is_preserved_without_staging_residue(self) -> None:
+        source = self.make_source()
+        args = self.args(source)
+        exact.run_exact_vector(args)
+        output = self.sandbox / "case"
+        before = {path.name: path.read_bytes() for path in output.iterdir() if path.is_file()}
+
+        with self.assertRaises(exact.ExactVectorError) as conflict:
+            exact.run_exact_vector(args)
+
+        after = {path.name: path.read_bytes() for path in output.iterdir() if path.is_file()}
+        self.assertEqual("output_batch_exists", conflict.exception.code)
+        self.assertEqual(before, after)
+        self.assertEqual([], list(self.sandbox.glob(".exact-pixel-staging-*")))
+
+    def test_publish_failure_cleans_staging_and_leaves_no_batch(self) -> None:
+        source = self.make_source()
+        args = self.args(source, "publish-failure")
+
+        with (
+            mock.patch.object(Path, "rename", side_effect=OSError("simulated publish failure")),
+            self.assertRaises(exact.ExactVectorError) as publish_error,
+        ):
+            exact.run_exact_vector(args)
+
+        self.assertEqual("output_publish_failed", publish_error.exception.code)
+        self.assertFalse((self.sandbox / "publish-failure").exists())
+        self.assertEqual([], list(self.sandbox.glob(".exact-pixel-staging-*")))
 
 
 if __name__ == "__main__":
