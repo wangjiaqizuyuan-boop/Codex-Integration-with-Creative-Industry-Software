@@ -60,11 +60,21 @@ class Vector60RuntimePackagingTest(unittest.TestCase):
         sidecar_entry = (scripts / "sidecar_entry.py").read_text(encoding="utf-8")
         sidecar_test = (scripts / "Test-Sidecar.ps1").read_text(encoding="utf-8")
 
+        self.assertIn("jsonschema==4.26.0", requirements)
+        notices = (REPO_ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+        self.assertIn("## jsonschema", notices)
+        self.assertIn("Version: `4.26.0`", notices)
+        self.assertIn("a7277432b0f7bcd0551f6e589d30457017125df4", notices)
+        self.assertIn("runtime infrastructure", notices)
         for name, version in PYTHON_RUNTIME_VERSIONS.items():
             self.assertIn(f"{name}=={version}", requirements)
         for import_name in ("vtracer", "pathops", "svgpathtools"):
             self.assertIn(f'"{import_name}"', spec)
         self.assertIn("copy_metadata(distribution)", spec)
+        self.assertIn("collect_data_files(", spec)
+        self.assertIn('"model_contracts"', spec)
+        self.assertIn('"model_contracts.schemas"', spec)
+        self.assertIn('includes=["schemas/*.json"]', spec)
         self.assertIn("vector60_python_runtime_included = $true", build)
         self.assertIn("vector60_node_runtime_included = $false", build)
         self.assertIn("vector60_svgo_runtime_included = $false", build)
@@ -73,6 +83,8 @@ class Vector60RuntimePackagingTest(unittest.TestCase):
         self.assertIn("--vector60-runtime-check", sidecar_test)
         self.assertIn("vector60_node_runtime_included = $false", sidecar_test)
         self.assertIn("vector60_svgo_runtime_included = $false", sidecar_test)
+        self.assertIn("missing packaged Python module", sidecar_test)
+        self.assertNotIn("throw $startupError", sidecar_test)
         self.assertNotRegex(build.lower(), r"\bnpx\b")
 
     def test_ci_runs_real_cross_platform_runtime_smoke(self) -> None:

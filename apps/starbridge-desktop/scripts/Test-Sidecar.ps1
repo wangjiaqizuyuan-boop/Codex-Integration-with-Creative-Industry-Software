@@ -84,6 +84,23 @@ try {
         throw "The sidecar did not report ready before the startup timeout."
     }
     $readyLine = $readyTask.Result
+    if ([string]::IsNullOrWhiteSpace($readyLine)) {
+        if (-not $process.HasExited) {
+            $process.WaitForExit(5000) | Out-Null
+        }
+        $startupError = $process.StandardError.ReadToEnd()
+        $failureKind = if ($startupError -match "ModuleNotFoundError") {
+            "missing packaged Python module"
+        }
+        elseif ($startupError -match "Traceback") {
+            "packaged Python startup error"
+        }
+        else {
+            "startup error"
+        }
+        $exitCode = if ($process.HasExited) { $process.ExitCode } else { "unknown" }
+        throw "The sidecar exited before reporting ready ($failureKind; exit code $exitCode)."
+    }
     $readyPrefix = "STARBRIDGE_READY "
     if (-not $readyLine.StartsWith($readyPrefix, [StringComparison]::Ordinal)) {
         throw "The sidecar emitted an invalid ready line."

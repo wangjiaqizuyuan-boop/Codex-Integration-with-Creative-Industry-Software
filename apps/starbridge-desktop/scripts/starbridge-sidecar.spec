@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PyInstaller.utils.hooks import copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 
 SCRIPT_DIR = Path(SPECPATH).resolve()
@@ -9,13 +9,18 @@ VECTOR60_DISTRIBUTIONS = ("vtracer", "skia-pathops", "svgpathtools")
 VECTOR60_METADATA = []
 for distribution in VECTOR60_DISTRIBUTIONS:
     VECTOR60_METADATA += copy_metadata(distribution)
+MODEL_CONTRACT_DATA = collect_data_files(
+    "model_contracts",
+    includes=["schemas/*.json"],
+)
 
 analysis = Analysis(
     [str(SCRIPT_DIR / "sidecar_entry.py")],
     pathex=[str(REPO_ROOT)],
     binaries=[],
-    datas=VECTOR60_METADATA,
+    datas=VECTOR60_METADATA + MODEL_CONTRACT_DATA,
     hiddenimports=[
+        "model_contracts.schemas",
         "starbridge_mcp.backend",
         "starbridge_mcp.mcp_server",
         "starbridge_mcp.server",
