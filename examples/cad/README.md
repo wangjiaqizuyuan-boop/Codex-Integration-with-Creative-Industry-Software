@@ -8,6 +8,7 @@
 - 调用 `validate_cad_plan` 验证结构。
 - 调用 `summarize_plan` 统计图层和实体数量。
 - 默认调用 `write_dxf(..., dry_run=True)`，不会写 DXF 文件。
+- 明确确认真实写入后，同批次生成已回读审计的 DXF、无头 SVG 预览和产物清单。
 
 ## 是否需要 AutoCAD
 
@@ -21,7 +22,7 @@
 examples/cad/output/
 ```
 
-不要把真实 DXF 输出提交到 Git。`output/` 只保留 `.gitkeep`。
+不要把真实 DXF、SVG 预览或 manifest 输出提交到 Git。`output/` 只保留 `.gitkeep`。
 
 ## 运行
 

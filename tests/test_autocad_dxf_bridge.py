@@ -166,9 +166,7 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             bridge.OUTPUT_ROOT = Path(tmp)
             try:
-                resolved = bridge._resolve_output_path(
-                    "examples/cad/output/prefixed.dxf"
-                )
+                resolved = bridge._resolve_output_path("examples/cad/output/prefixed.dxf")
             finally:
                 bridge.OUTPUT_ROOT = original_root
 
@@ -212,15 +210,23 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             self.assertTrue(output.is_file())
 
             manifest_path = output.with_suffix(".manifest.json")
+            preview_path = output.with_suffix(".preview.svg")
             self.assertTrue(manifest_path.is_file())
+            self.assertTrue(preview_path.is_file())
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual("1.0", manifest["schema_version"])
             self.assertEqual(0, manifest["verification"]["audit_errors"])
             self.assertEqual(5, manifest["verification"]["entity_count"])
-            self.assertEqual(2, len(result["details"]["artifacts"]))
-            self.assertTrue(
-                all(item["sha256"] for item in result["details"]["artifacts"])
+            self.assertEqual(2, len(manifest["artifacts"]))
+            self.assertTrue(manifest["preview_verification"]["verified"])
+            self.assertGreater(manifest["preview_verification"]["path_count"], 0)
+            self.assertEqual(
+                0,
+                manifest["preview_verification"]["external_reference_count"],
             )
+            self.assertEqual(3, len(result["details"]["artifacts"]))
+            self.assertTrue(all(item["sha256"] for item in result["details"]["artifacts"]))
+            self.assertIn("<svg", preview_path.read_text(encoding="utf-8"))
 
             import ezdxf
 
@@ -251,6 +257,64 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             self.assertEqual("output_batch_exists", result["details"]["status"])
             self.assertEqual("preserve-me", output.read_text(encoding="utf-8"))
             self.assertFalse(output.with_suffix(".manifest.json").exists())
+
+    @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
+    def test_confirmed_write_never_overwrites_existing_preview(self) -> None:
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "existing_preview.dxf"
+            preview = output.with_suffix(".preview.svg")
+            preview.write_text("preserve-preview", encoding="utf-8")
+            try:
+                result = write_dxf(
+                    minimal_plan(),
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assert_schema(result, "write_dxf")
+            self.assertFalse(result["ok"])
+            self.assertEqual("output_batch_exists", result["details"]["status"])
+            self.assertEqual("preserve-preview", preview.read_text(encoding="utf-8"))
+            self.assertFalse(output.exists())
+            self.assertFalse(output.with_suffix(".manifest.json").exists())
+
+    @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
+    def test_preview_verification_failure_rolls_back_current_batch(self) -> None:
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        original_verify = bridge._verify_svg_preview
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "rollback_preview.dxf"
+
+            def fail_preview(_: Path) -> dict:
+                raise ValueError("simulated preview verification failure")
+
+            bridge._verify_svg_preview = fail_preview
+            try:
+                result = write_dxf(
+                    minimal_plan(),
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                bridge._verify_svg_preview = original_verify
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assert_schema(result, "write_dxf")
+            self.assertFalse(result["ok"])
+            self.assertEqual("generation_failed", result["details"]["status"])
+            self.assertFalse(output.exists())
+            self.assertFalse(output.with_suffix(".preview.svg").exists())
+            self.assertFalse(output.with_suffix(".manifest.json").exists())
+            self.assertEqual([], list(Path(tmp).glob(".*.staging")))
 
 
 if __name__ == "__main__":

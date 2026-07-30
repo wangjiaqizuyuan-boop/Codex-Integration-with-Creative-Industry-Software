@@ -21,6 +21,7 @@ class OutputGitignoreTests(unittest.TestCase):
             with self.subTest(suffix=suffix):
                 self.assertTrue(self.git_check_ignore(f"examples/output/illustrator/demo.{suffix}"))
         self.assertTrue(self.git_check_ignore("examples/output/comfyui/demo_manifest.json"))
+        self.assertTrue(self.git_check_ignore("examples/cad/output/public_demo.preview.svg"))
         self.assertTrue(self.git_check_ignore("examples/output/evidence/manifest.latest.json"))
         self.assertTrue(self.git_check_ignore("sandbox/ps_preview_demo.png"))
 

@@ -38,6 +38,7 @@ canvas/
 !examples/cad/output/
 !examples/cad/output/.gitkeep
 examples/cad/output/**/*.manifest.json
+examples/cad/output/**/*.preview.svg
 **/outputs/
 **/reports/
 scratch/

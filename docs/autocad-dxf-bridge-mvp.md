@@ -14,8 +14,9 @@
 - 不扫描用户目录。
 - `dry_run=False` 时只允许写到 `examples/cad/output/`。
 - 真实写入必须同时提供 `confirm_write=True`，且不会覆盖已有批次。
-- DXF 先写临时文件，再由 `ezdxf` 重新读取并执行 audit；验证通过后才原子交付。
-- 同批次写出 `<name>.manifest.json`，记录 DXF 相对路径、字节数、SHA-256、实体数和 audit 结果。
+- DXF 先写临时文件，再由 `ezdxf` 重新读取并执行 audit；验证通过后，从该回读文档生成 `<name>.preview.svg`。
+- DXF、无头 SVG 预览和 `<name>.manifest.json` 作为同一批次交付；任一产物失败就回滚当前批次。
+- manifest 记录 DXF 与 SVG 的相对路径、字节数和 SHA-256，以及实体数、audit 结果、SVG 路径数和外部引用检查结果。
 - 输出统一经过 KORYAO sanitizer，不输出真实用户目录。
 
 ## 支持的实体类型
@@ -45,7 +46,7 @@ python examples\cad\generate_dxf_plan.py `
   --output starbridge_public_demo.dxf
 ```
 
-成功条件不是“写文件调用没有报错”，而是 DXF 与 manifest 都存在、DXF 可重新读取、audit 错误数为 0、实体数与已校验 plan 一致。任一条件失败时只清理当前临时批次，不保留半成品。
+成功条件不是“写文件调用没有报错”，而是 DXF、SVG 预览与 manifest 都存在；DXF 可重新读取、audit 错误数为 0、实体数与已校验 plan 一致；SVG 可解析、至少包含一个矢量路径，并且不含脚本、嵌入位图或外部引用。任一条件失败时只清理当前临时批次，不保留半成品。
 
 ## 后续扩展
 

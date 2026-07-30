@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -300,6 +301,94 @@ class AutocadDxfBridge(BaseBridge):
             "expected_entity_count": expected_count,
         }
 
+    def _verify_svg_preview(self, path: Path) -> dict[str, Any]:
+        payload = path.read_bytes()
+        if not payload or len(payload) > 64 * 1024 * 1024:
+            raise ValueError("generated SVG preview has an invalid size")
+        try:
+            text = payload.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("generated SVG preview is not UTF-8") from exc
+
+        lowered = text.lower()
+        if any(
+            marker in lowered
+            for marker in (
+                "<!doctype",
+                "<!entity",
+                "<script",
+                "<image",
+                "<foreignobject",
+                "javascript:",
+                "url(",
+                "@import",
+            )
+        ):
+            raise ValueError("generated SVG preview contains unsafe or external content")
+        try:
+            root = ET.fromstring(text)
+        except ET.ParseError as exc:
+            raise ValueError("generated SVG preview is not valid XML") from exc
+
+        namespace = "http://www.w3.org/2000/svg"
+        if root.tag != f"{{{namespace}}}svg":
+            raise ValueError("generated SVG preview has an invalid root element")
+
+        path_count = 0
+        for element in root.iter():
+            local_name = element.tag.rsplit("}", 1)[-1].lower()
+            if local_name in {"a", "iframe", "object", "embed", "use", "video", "audio"}:
+                raise ValueError("generated SVG preview contains an external-capable element")
+            for raw_name, raw_value in element.attrib.items():
+                attribute_name = raw_name.rsplit("}", 1)[-1].lower()
+                value = raw_value.strip().lower()
+                if (
+                    attribute_name in {"href", "src"}
+                    or attribute_name.startswith("on")
+                    or "url(" in value
+                    or "javascript:" in value
+                ):
+                    raise ValueError("generated SVG preview contains an external reference")
+            if local_name == "path":
+                if not (element.get("d") or "").strip():
+                    raise ValueError("generated SVG preview contains an empty path")
+                path_count += 1
+        if path_count == 0:
+            raise ValueError("generated SVG preview contains no vector paths")
+
+        return {
+            "verified": True,
+            "path_count": path_count,
+            "embedded_raster_count": 0,
+            "external_reference_count": 0,
+            "size_bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+
+    def _write_and_verify_svg_preview(
+        self,
+        dxf_path: Path,
+        staging_path: Path,
+    ) -> dict[str, Any]:
+        import ezdxf
+        from ezdxf.addons.drawing import Frontend, RenderContext, layout, svg
+
+        readback = ezdxf.readfile(dxf_path)
+        auditor = readback.audit()
+        if auditor.has_errors:
+            raise ValueError("cannot preview a DXF that failed readback audit")
+
+        backend = svg.SVGBackend()
+        Frontend(RenderContext(readback), backend).draw_layout(readback.modelspace())
+        staging_path.write_text(
+            backend.get_string(layout.Page(0, 0)),
+            encoding="utf-8",
+        )
+        verification = self._verify_svg_preview(staging_path)
+        verification["source_audit_errors"] = len(auditor.errors)
+        verification["source_entity_count"] = len(readback.modelspace())
+        return verification
+
     def _entity_points(self, entity: dict[str, Any]) -> list[list[float]]:
         entity_type = entity.get("type")
         if entity_type == "line":
@@ -400,8 +489,7 @@ class AutocadDxfBridge(BaseBridge):
                 ok=False,
                 action="write_dxf",
                 message=(
-                    "Output must be one .dxf file inside the allowed sandbox "
-                    "(examples/cad/output)."
+                    "Output must be one .dxf file inside the allowed sandbox (examples/cad/output)."
                 ),
                 details={"output_path": str(out_path)},
                 warnings=["Only outputs under examples/cad/output are allowed for real writes."],
@@ -436,11 +524,20 @@ class AutocadDxfBridge(BaseBridge):
             )
 
         manifest_path = out_path.with_suffix(".manifest.json")
+        preview_path = out_path.with_suffix(".preview.svg")
         staging_dxf = out_path.with_name(f".{out_path.name}.staging")
+        staging_preview = preview_path.with_name(f".{preview_path.name}.staging")
         staging_manifest = manifest_path.with_name(f".{manifest_path.name}.staging")
         if any(
             path.exists() or path.is_symlink()
-            for path in (out_path, manifest_path, staging_dxf, staging_manifest)
+            for path in (
+                out_path,
+                preview_path,
+                manifest_path,
+                staging_dxf,
+                staging_preview,
+                staging_manifest,
+            )
         ):
             return self._result(
                 ok=False,
@@ -457,6 +554,7 @@ class AutocadDxfBridge(BaseBridge):
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
         promoted_dxf = False
+        promoted_preview = False
         promoted_manifest = False
         try:
             verification = self._write_and_audit_dxf(normalized, staging_dxf)
@@ -467,14 +565,27 @@ class AutocadDxfBridge(BaseBridge):
                 "size_bytes": staging_dxf.stat().st_size,
                 "sha256": self._sha256(staging_dxf),
             }
+            preview_verification = self._write_and_verify_svg_preview(
+                staging_dxf,
+                staging_preview,
+            )
+            preview_artifact = {
+                "role": "cad_preview",
+                "relative_path": preview_path.relative_to(self.OUTPUT_ROOT.resolve()).as_posix(),
+                "media_type": "image/svg+xml",
+                "size_bytes": staging_preview.stat().st_size,
+                "sha256": self._sha256(staging_preview),
+            }
             manifest = {
                 "schema_version": "1.0",
                 "bridge": self.bridge_id,
                 "action": "write_dxf",
                 "state": "completed",
                 "artifact": dxf_artifact,
+                "artifacts": [dxf_artifact, preview_artifact],
                 "plan_summary": summary,
                 "verification": verification,
+                "preview_verification": preview_verification,
             }
             staging_manifest.write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
@@ -483,14 +594,14 @@ class AutocadDxfBridge(BaseBridge):
 
             staging_dxf.replace(out_path)
             promoted_dxf = True
+            staging_preview.replace(preview_path)
+            promoted_preview = True
             staging_manifest.replace(manifest_path)
             promoted_manifest = True
 
             manifest_artifact = {
                 "role": "generation_manifest",
-                "relative_path": manifest_path.relative_to(
-                    self.OUTPUT_ROOT.resolve()
-                ).as_posix(),
+                "relative_path": manifest_path.relative_to(self.OUTPUT_ROOT.resolve()).as_posix(),
                 "media_type": "application/json",
                 "size_bytes": manifest_path.stat().st_size,
                 "sha256": self._sha256(manifest_path),
@@ -498,23 +609,26 @@ class AutocadDxfBridge(BaseBridge):
             return self._result(
                 ok=True,
                 action="write_dxf",
-                message="DXF generated, read back, and audited.",
+                message="DXF generated, audited, and delivered with a verified SVG preview.",
                 details={
                     "dry_run": False,
                     "state": "completed",
                     "terminal": True,
                     "result_ready": True,
                     "confirm_write": confirm_write,
-                    "artifacts": [dxf_artifact, manifest_artifact],
+                    "artifacts": [dxf_artifact, preview_artifact, manifest_artifact],
                     "verification": verification,
+                    "preview_verification": preview_verification,
                     "summary": summary,
                 },
             )
-        except (OSError, RuntimeError, ValueError):
-            for path in (staging_dxf, staging_manifest):
+        except (ImportError, OSError, RuntimeError, ValueError):
+            for path in (staging_dxf, staging_preview, staging_manifest):
                 path.unlink(missing_ok=True)
             if promoted_manifest:
                 manifest_path.unlink(missing_ok=True)
+            if promoted_preview:
+                preview_path.unlink(missing_ok=True)
             if promoted_dxf:
                 out_path.unlink(missing_ok=True)
             return self._result(
