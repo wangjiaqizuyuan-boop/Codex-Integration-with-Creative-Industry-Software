@@ -1,13 +1,13 @@
 ---
 name: starbridge-photoshop-mcp
-description: Use StarBridge Photoshop MCP safely from Codex. Use when the user mentions Photoshop, PS, PSD, layers, document info, subject cutout, camera raw, BatchPlay validation, Photoshop recipes, Photoshop COM, UXP or node proxy, or asks Codex to inspect or extend Photoshop-related StarBridge MCP tools.
+description: Use KORYAO Photoshop MCP safely from Codex. Use when the user mentions Photoshop, PS, PSD, layers, document info, subject cutout, camera raw, BatchPlay validation, Photoshop recipes, Photoshop COM, UXP or node proxy, or asks Codex to inspect or extend Photoshop-related KORYAO MCP tools.
 ---
 
-# StarBridge Photoshop MCP
+# KORYAO Photoshop MCP
 
 ## Core Rule
 
-Treat Photoshop as a local authorized desktop app with private user assets. Prefer StarBridge read-only probes, document summaries, recipe plans, and validation before any GUI action or export.
+Treat Photoshop as a local authorized desktop app with private user assets. Prefer KORYAO read-only probes, document summaries, recipe plans, and validation before any GUI action or export.
 
 Do not open private PSD files, scan source-image folders, run arbitrary JSX/BatchPlay, save/export real artwork, read Creative Cloud cache, or write outside approved sandbox output.
 
@@ -18,6 +18,8 @@ Read only what is needed:
 - `examples/photoshop_bridge/README.md`
 - `docs/03-codex-photoshop.md`
 - `docs/photoshop-codex-bridge.md`
+- `docs/diagramforge-photoshop-upstream-audit.md` when comparing upstream capabilities
+- `.codex/skills/starbridge-smart-cutout-ps/SKILL.md` for one-subject-per-layer tasks
 - `starbridge_mcp/adapters/photoshop/`
 - `starbridge_mcp/core/tool_registry.py`
 - `tests/test_photoshop_*.py`
@@ -43,8 +45,14 @@ Use `npm.cmd`, not bare `npm`, on Windows PowerShell.
 | Need | Preferred tool path | Boundary |
 | --- | --- | --- |
 | Check availability | `ps.probe`, `photoshop.session_info` | Read-only, no PSD open |
+| Discover typed maturity | `ps.capabilities` | Static support is separate from live connection truth |
+| Compile a result Recipe | `ps.recipe.compile` | Real production recipes name `workflow:photoshop-production-v1`; planned categories are blocked |
+| Build a resumable batch | `ps.batch.plan` | Deterministic single-host FIFO; planned items never enter the executable queue |
+| Verify delivery gates | `ps.result.verify` | Sanitized before/after state, artifact hashes, native reopen when PSD is requested |
+| Read live state/preview | `ps.get_state`, `ps.get_preview` | Fail closed; mock state and placeholder previews are never accepted as evidence |
 | Inspect active document | `ps.document.info`, `photoshop.document_info` | Active document only, no save/export |
 | Inspect layers | `ps.layers.list` | Layer tree summary only |
+| Separate each visible subject | `$starbridge-smart-cutout-ps` | Explicit image/spec/model; generated files stay in ignored output |
 | Validate BatchPlay | `ps.batchplay.validate` | Validate descriptors, never execute arbitrary BatchPlay |
 | Plan actions | `photoshop.recipe_list`, `photoshop.recipe_plan` | Dry-run first |
 | Prepare Illustrator trace source | `photoshop.recipe_run` + `prepare_vector_trace` | One authorized PNG/JPEG; copy first; write/export confirmations |
@@ -63,6 +71,12 @@ Any real Photoshop write/export must require:
 - no absolute user path in returned text
 
 Never add a raw "execute script" tool. Add audited recipe-level actions instead.
+
+## Smart Cutout Routing
+
+Route requests such as “每栋楼一个图层”, “每个物体分别抠图”, or “生成可编辑分层 PSD” to `$starbridge-smart-cutout-ps`. That skill owns instance prompt boxes, disjoint full-canvas RGBA export, preview review, and the Photoshop-native save/reopen compatibility gate.
+
+Do not claim completion from masks or a parser-readable PSD alone. Require the expected subject count, exact pixel partition, and `validated_after_reopen=true`; otherwise report the result as needing review or prepared for Photoshop.
 
 For `prepare_vector_trace`, keep the fixed flow: validate authorization → copy the explicit source into `examples/output/photoshop` → run only the repository JSX → save a redacted EvidenceManifest → pass only the prepared sandbox PNG to Illustrator.
 

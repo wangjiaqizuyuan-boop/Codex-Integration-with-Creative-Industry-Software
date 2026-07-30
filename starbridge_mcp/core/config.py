@@ -8,6 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 BRIDGE_ENV_VARS = {
+    "diagramforge": ("DRAWIO_EXE",),
     "comfyui": ("STARBRIDGE_COMFYUI_URL", "COMFY_BASE_URL", "COMFY_ROOT", "COMFY_LAUNCHER"),
     "blender": ("STARBRIDGE_BLENDER_EXE", "BLENDER_EXE", "BLENDER_MCP_DIR"),
     "cad_autocad": ("STARBRIDGE_CAD_MODE", "AUTOCAD_EXE"),
@@ -18,7 +19,7 @@ BRIDGE_ENV_VARS = {
 
 
 @dataclass(frozen=True)
-class StarBridgeConfig:
+class KORYAOConfig:
     repo_root: Path = REPO_ROOT
     comfy_url: str = (
         os.environ.get("STARBRIDGE_COMFYUI_URL")
@@ -26,6 +27,10 @@ class StarBridgeConfig:
         or "http://127.0.0.1:8188"
     )
     timeout: int = int(os.environ.get("STARBRIDGE_PROBE_TIMEOUT", "8"))
+
+
+# Backward-compatible public name for existing integrations.
+StarBridgeConfig = KORYAOConfig
 
 
 def env_summary() -> dict[str, dict[str, bool]]:

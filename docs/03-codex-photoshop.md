@@ -18,8 +18,39 @@
 | demo manifest | `examples/photoshop_bridge/write_demo_manifest.py` | 汇总本地 demo 输出，manifest 本身不提交 |
 | COM 探针 | `examples/photoshop_bridge/scripts/com_probe.ps1` | 创建测试文档并导出 PNG |
 | 主体抠图实验 | `examples/photoshop_bridge/scripts/extract_subject_to_png.ps1` | 输入和输出路径都由参数传入 |
+| 智能多实例分层 | `.codex/skills/starbridge-smart-cutout-ps/` | 每个可见主体独立透明图层，最终由 Photoshop 原生保存并重开验收 |
 | 本机接入报告 | `examples/photoshop_bridge/write_practice_report.py` | 汇总诊断、实操结果和 PNG 元数据 |
 | 四联海报实验 | `examples/photoshop_bridge/experiments/4up_hex_poster/run_4up_hex_poster.ps1` | 生成参数化 JSX；本机完整执行会调用 Photoshop COM |
+
+## 智能抠图 PS Skill
+
+仓库内 Skill `$starbridge-smart-cutout-ps` 处理“每栋楼一个图层”“每个物体分别抠图”等多实例请求。它把每个可见主体导出为全画布透明 PNG，用优先级消除相邻蒙版重叠，并验证背景、未分配前景和所有主体恰好覆盖每个源像素一次。
+
+公开的匿名化多楼体范例在 `.codex/skills/starbridge-smart-cutout-ps/references/skyline-instance-layering.md`；实例规格模板在同目录的 `instance-layer-spec.example.json`。仓库不保存示例原图、真实楼体坐标、模型文件名或生成结果。
+
+先生成本地图层和 manifest：
+
+```powershell
+python .codex\skills\starbridge-smart-cutout-ps\scripts\export_instance_layers.py `
+  --input "<explicit-input-image>" `
+  --spec "<client-approved-instance-spec.json>" `
+  --out-dir "examples/output/photoshop/smart-cutout-job" `
+  --model "<explicit-local-segmentation-model-file>" `
+  --confirm-write
+```
+
+检查 `preview/layer-index.jpg` 与 `preview/cutout-preview.png` 后，再由 Photoshop 原生构建、保存并重新打开：
+
+```powershell
+powershell -ExecutionPolicy Bypass `
+  -File .codex\skills\starbridge-smart-cutout-ps\scripts\build_instance_psd.ps1 `
+  -ManifestPath "examples/output/photoshop/smart-cutout-job/manifest.json" `
+  -OutputPath "examples/output/photoshop/smart-cutout-job/editable.psd" `
+  -ConfirmWrite `
+  -OpenAfterBuild
+```
+
+只有返回 `validated_after_reopen=true`，且 Photoshop 中图层数量、尺寸和可见性符合预期，才算 PSD 完成。第三方解析器能读取 PSD 不能替代这项验收。
 
 ## 需要本机安装什么
 
@@ -129,6 +160,7 @@ powershell -ExecutionPolicy Bypass -File examples\photoshop_bridge\experiments\4
 - 不能提交源图路径、桌面路径或导出结果。
 - 不能承诺复杂商业海报、复杂文字背景、线稿背景都能自动抠好。
 - 不能把实验脚本说成稳定生产级工作流。
+- 不能把自动实例蒙版说成无需复审的语义正确结果。
 - 不能自动控制 Camera Raw modal UI 鼠标拖动；只能走结构化计划和已审 BatchPlay descriptor。
 - 复杂商业修图、主体抠图和真实项目 PSD 仍然需要人工确认。
 
@@ -139,3 +171,16 @@ powershell -ExecutionPolicy Bypass -File examples\photoshop_bridge\experiments\4
 3. 增加二次蒙版、最大主体保留、边缘羽化和人工确认流程。
 4. 评估 UXP 面板和本地 MCP 工具层。
 5. 保持输入和输出路径都由参数传入，不写默认个人路径。
+
+## Photoshop Recipe DSL 与批处理闭环
+
+本次新增四个只读类型化入口：
+
+- `ps.capabilities`：把 session、document、layers、selection/mask、adjustments、smart objects、text、history、export 分开标注为 `implemented / experimental / planned`；工具存在不等于真实 Photoshop 已连接。
+- `ps.recipe.compile`：编译 `simple-tone-export-v1`、`production-subject-delivery-v1`、`batch-production-delivery-v1` 及规划中的智能对象 Recipe，返回执行入口、最小或高级能力面、确认门、检查点和质量门。
+- `ps.batch.plan`：为真实 `photoshop-production-v1` 工作流生成单 Photoshop host FIFO、确定性 item ID、幂等键和已完成 item 续跑计划；规划中的智能对象任务会进入 `blocked_planned`，不会排进执行队列。
+- `ps.result.verify`：验收 sandbox 副本、原图未覆盖、前后状态回读、产物 SHA-256 和 Photoshop 原生重开；失败时最多允许三轮局部修正。
+
+`simple-tone-export-v1`、`production-subject-delivery-v1` 和 `batch-production-delivery-v1` 统一路由到已有的真实 `photoshop-production-v1` 管理型工作流；该工作流具备源 hash、复制后处理、画布与基础调色、主体导出、PNG/JPEG/PSD 交付、暂存提升和产物 hash 验证。请求 PSD 时，UXP 必须重新打开暂存 PSD 并验证尺寸后才允许代理提升为最终产物。`product-composite-verified-v1` 和批量智能对象 Recipe 会如实列出仍为 `planned` 的类别并返回 `execution_ready=false`。
+
+`ps.get_state` 只有 COM 或 UXP 实时回读成功时才返回成功，绝不把 mock 状态作为证据。`ps.get_preview` 只读取同一 `job_id` 下由 `ps.preview.export` 生成且 EvidenceManifest 标记 `real_output_verified=true` 的预览；不存在真实预览时返回不可用，不生成伪 base64。

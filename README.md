@@ -1,152 +1,186 @@
-# StarBridge：Codex Skill + MCP + Adobe UXP
+<p align="center">
+  <img src="brand/exports/koryao-software-icon.png" width="156" alt="KORYAO Basic software icon">
+</p>
 
-[![CI](https://github.com/jianbaorui07-dot/Codex-Integration-with-Creative-Industry-Software/actions/workflows/ci.yml/badge.svg)](https://github.com/jianbaorui07-dot/Codex-Integration-with-Creative-Industry-Software/actions/workflows/ci.yml)
-![Windows first](https://img.shields.io/badge/Windows-first-2563eb)
-![MCP stdio](https://img.shields.io/badge/MCP-stdio-16a34a)
-![Local first](https://img.shields.io/badge/local--first-safe-0f766e)
-![Python](https://img.shields.io/badge/python-3.10%2B-blue)
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+<h1 align="center">KORYAO Basic｜构曜纪基础版</h1>
 
-StarBridge 是一个面向本地创意软件的开源接入层，聚焦三件事：
+<p align="center">
+  面向设计师与创意工作者的本地 AI 工作台：把 Codex、图片矢量化、任务验证与创意软件交付连接成一条可追溯流程。
+</p>
 
-1. 用 **Codex Skill** 描述软件工作流、路由和安全边界；
-2. 用 **StarBridge MCP** 提供结构化的探针、校验、dry-run 与证据输出；
-3. 用 **Adobe UXP / Node Proxy** 连接 Photoshop、Illustrator 等桌面软件。
+<p align="center">
+  <strong>Local-first · Windows-first · Safe-by-default · Evidence-backed</strong>
+</p>
 
-项目坚持 local-first：默认只读或 dry-run，路径可脱敏，真实写入必须显式确认并限制在安全输出目录。仓库不保存客户素材、私有工程、账号状态、模型文件或本机路径。
+<p align="center">
+  <a href="https://github.com/jianbaorui07-dot/KORYAO-basic/actions/workflows/ci.yml"><img src="https://github.com/jianbaorui07-dot/KORYAO-basic/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/version-v0.1.0--alpha.2-f59e0b" alt="version">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-2563eb" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/MCP-stdio-16a34a" alt="MCP stdio">
+  <img src="https://img.shields.io/badge/license-KORYAO%20Proprietary-b91c1c" alt="KORYAO Proprietary License">
+</p>
 
-## 当前状态：v0.1-alpha
+---
 
-| 等级 | 当前范围 |
-| --- | --- |
-| stable | MCP stdio、tool registry、resources/prompts、状态探针、路径脱敏、operation context、ComfyUI queue / progress / job snapshot 与 workflow validate、AutoCAD/DXF plan validate / dry-run / guarded write |
-| experimental | Photoshop / Illustrator UXP 与本地代理、sandbox demo、部分桌面软件探针 |
-| planned | Blender confirmed render、CapCut draft skeleton、跨软件 asset handoff |
-| not implemented | 自动登录、绕过授权、读取客户私有工程、无确认写入真实桌面软件 |
+当前发布边界 / Current release boundary: **v0.1-alpha**。核心安全探针和像素重建（精确重建）标记为 `stable`；桌面端、Adobe 写入和本地模型运行端标记为 `experimental`；其余能力按证据标记为 `planned` 或 `not implemented`。
 
-Photoshop, Illustrator, Blender, and CapCut write flows are experimental or planned unless a reviewed local run proves otherwise.
+> AutoCAD/DXF plan validate / dry-run / guarded write. Photoshop, Illustrator, Blender, and CapCut write flows are experimental or planned.
 
-完整能力与证据见 [能力矩阵](docs/CAPABILITY_MATRIX.md) 和 [v0.1-alpha 发布说明](docs/RELEASE_V0_1_ALPHA.md)。
+## 项目定位
 
-## 5 分钟开始
+KORYAO Basic 不是“套壳聊天页面”，也不是把图片上传到远程服务器的在线工具。它由三个部分组成：
 
-环境：Windows 优先，Python 3.10+；Node.js 仅在运行 UXP 本地代理或前端示例时需要。
+1. **Codex 调度层**：理解用户目标，选择合适的 Skill 与 MCP 工具。
+2. **本地安全运行时**：限制路径、要求确认、执行任务、验证结果并生成脱敏记录。
+3. **创意生产工具链**：完成图片矢量化、Adobe 文件交付、ComfyUI/CAD/Blender 等桥接任务。
 
-```powershell
-git clone https://github.com/jianbaorui07-dot/Codex-Integration-with-Creative-Industry-Software.git
-cd Codex-Integration-with-Creative-Industry-Software
+核心目标是让创意任务形成一条清楚的本地闭环：
 
-python -m pip install --upgrade pip
-pip install -e ".[dev]"
+```text
+提出目标 → 选择素材 → 本机执行 → 质量核对 → 预览结果 → 导出交付 → 保存证据
 ```
 
-先运行不依赖桌面软件的安全检查：
+> 当前版本仍处于 Alpha 阶段。像素重建与核心安全探针已有明确验证；桌面端、Adobe 写入、本地私有模型运行端等能力仍按 `experimental` 标记；尚未完成的功能不会包装成已交付能力。
+
+## 当前能力状态
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| 像素重建（精确重建） / Pixel Reconstruction | **Stable core** | 将工作分辨率中的 RGBA 像素重建为真实 SVG 几何，并逐像素回渲染核对 |
+| 匠心 / 智能 / 轻量矢量 | **Available** | 面向插画、图标、Logo 与纹样的不同编辑性和复杂度需求；匠心模式可选 Vector60 自动增强 |
+| Codex + MCP 本地调度 | **Available** | 项目级配置、安全工具注册、任务计划和脱敏证据已实现 |
+| Windows 桌面端 | **Experimental** | 已有启动、关闭、重启和 sidecar 生命周期证据，仍需更多干净机器验收 |
+| AI / PSD 原生交付 | **Experimental** | Windows 上调用 Illustrator / Photoshop，要求确认、验证和不覆盖 |
+| KORYAO-C1 本地模型运行端 | **Experimental** | 仅通过 loopback 接收结构化任务元数据，不直接读取磁盘或执行软件 |
+| macOS 桌面端 | **Planned** | 当前只支持核心 Python/MCP 路径和前端单独构建 |
+| ComfyUI / Blender / CAD / 剪映闭环 | **Partial / Planned** | 已有探针、协议、dry-run 或实验实现，尚未完成统一客户级验收 |
+| 正式商业发布 | **Not released** | 仍缺代码签名、SmartScreen、升级回滚、正式安装包和售后流程 |
+
+## 四种图片矢量化模式
+
+| 模式 | 适合场景 | 主要特点 |
+| --- | --- | --- |
+| **像素重建 `exact`** | 像素级存档、忠实复刻 | 每个像素转为 SVG 几何；不嵌入 PNG、Base64、脚本或外链 |
+| **匠心矢量 `artisan`** | 插画、传统纹样、复杂图形 | 更少锚点、更顺曲线；可选 `--auto-enhance` 和场景预设 |
+| **智能矢量 `smart`** | 通用设计素材 | 平衡相似度、细节与文件复杂度 |
+| **轻量矢量 `lightweight`** | Logo、图标、标识 | 减少颜色、碎片、节点和文件体积 |
+
+默认工作最长边为 `1024`，可选 `512 / 1600 / 2048 / 原始尺寸`。SVG 安全上限可选 `64 / 128 / 256 MB`，超过上限时任务会停止，不覆盖原图，也不会静默降级为 Illustrator Image Trace。
+
+## 快速开始
+
+### Windows：安装核心环境
+
+最低要求：Git 64 位、Python 3.10+。运行桌面端还需要 Node.js 22 LTS、Rust stable MSVC、Microsoft C++ Build Tools 与 WebView2。
 
 ```powershell
-python examples\bridge_status.py --json --redact-paths --soft-exit
-python -m starbridge_mcp.server tools --json --safe-only
-python scripts\security_check.py
-python -m unittest discover -s tests
+git clone https://github.com/jianbaorui07-dot/KORYAO-basic.git
+Set-Location .\KORYAO-basic
+powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -Profile auto
 ```
 
-如果已经安装 Node.js，也可以使用快捷命令：
+`bootstrap.ps1` 会：
+
+- 在仓库内创建 `.venv`；
+- 安装匹配的 Python/MCP 依赖；
+- 生成项目级 `.codex/config.toml`；
+- 运行安全预检；
+- 不修改无关的系统级软件。
+
+完成后，在该仓库中新建一个 Codex 任务，让 Codex 重新加载 MCP 配置。
+
+### 启动 Windows 桌面端
 
 ```powershell
-npm.cmd run bridge:status:safe
-npm.cmd run starbridge:tools:safe
-npm.cmd run preflight
-npm.cmd test
+npm.cmd ci --prefix apps\starbridge-desktop
+powershell -ExecutionPolicy Bypass -File apps\starbridge-desktop\scripts\Build-Sidecar.ps1
+npm.cmd run tauri:dev --prefix apps\starbridge-desktop
 ```
 
-PowerShell 若拦截 `npm.ps1`，请使用 `npm.cmd`。
+只验证核心服务：
 
-## 架构
+```powershell
+.\.venv\Scripts\python.exe scripts\starbridge_preflight.py --markdown
+.\.venv\Scripts\python.exe -m starbridge_mcp.server tools --json --safe-only
+```
+
+### macOS：先运行核心 MCP
+
+```bash
+git clone https://github.com/jianbaorui07-dot/KORYAO-basic.git
+cd KORYAO-basic
+bash ./bootstrap.sh --profile auto
+```
+
+该脚本不会自动安装或修改 Homebrew、Xcode、Rosetta，也不会把当前前端构建描述成可运行的 macOS 桌面版。
+
+```bash
+./.venv/bin/python scripts/starbridge_preflight.py --markdown
+./.venv/bin/python -m starbridge_mcp.server tools --json --safe-only
+```
+
+## 命令行矢量化
+
+```powershell
+python -m pip install -e ".[vectorization]"
+
+npm.cmd run illustrator:vectorize -- --input "<input.png>" --mode exact --max-dimension 1024 --max-svg-size-mb 128 --reference-id "reference"
+npm.cmd run illustrator:vectorize -- --input "<input.png>" --mode artisan --reference-id "reference"
+npm.cmd run illustrator:vectorize -- --input "<input.png>" --mode smart --reference-id "reference"
+npm.cmd run illustrator:vectorize -- --input "<input.png>" --mode lightweight --reference-id "reference"
+```
+
+## 安全与隐私边界
+
+- 默认只读、计划或 `dry-run`；真实写入必须由用户明确确认。
+- 输出限制在安全根目录、项目产物目录或用户明确选择的新路径。
+- 不递归扫描私人目录，不覆盖源文件，不静默降低质量门槛。
+- 报告只保存哈希、相对引用和状态，不保存 Token、Cookie、OAuth、客户素材或真实绝对路径。
+- KORYAO-C1 本地模型运行端只接收经过 schema 校验的任务元数据、素材 ID 和 Adapter 白名单。
+- Community 基础能力无需登录或联网；当前源码修订采用 KORYAO 自有许可证。
+
+请勿把 Token、Cookie、Adobe 授权信息、客户素材或真实保存路径提交到 GitHub。
+
+## 架构概览
 
 ```mermaid
 flowchart LR
-  A["Codex / AI 客户端"] --> B["Codex Skills"]
-  B --> C["StarBridge MCP stdio"]
-  C --> D["Tool Registry / Resources / Prompts"]
-  D --> E["安全层：dry-run / redact / confirm"]
-  E --> F["ComfyUI / CAD / Blender 探针"]
-  E --> G["Adobe UXP / Node Proxy"]
-  G --> H["Photoshop / Illustrator"]
+  A["用户 / User"] --> B["Codex 对话"]
+  B --> C["Codex Skills"]
+  C --> D["KORYAO MCP"]
+  D --> E["本地安全层"]
+  E --> F["矢量化与验证引擎"]
+  E --> G["Adobe / ComfyUI / CAD / Blender Adapter"]
+  E --> H["KORYAO-C1 本地模型运行端"]
+  F --> I["SVG / 预览 / 质量报告"]
+  G --> J["受控软件交付结果"]
+  H --> K["计划 / 评估 / 修复建议"]
 ```
 
-- Skill 负责选择路线和验证顺序，不保存素材。
-- MCP 负责稳定、结构化、可审计的工具调用。
-- UXP / Node Proxy 负责桌面软件通道，不开放任意脚本执行。
-- 专业软件仍负责真实生产；StarBridge 不替代 Photoshop、Illustrator、AutoCAD 或 Blender。
+## 中文阅读指南与仓库区域标注
 
-## 能力入口
+- **图像生成区**：`examples/comfy_bridge/` 与相关安全探针，面向 ComfyUI 工作流验证和模板调用。
+- **工程制图区**：`cad-mcp-autocad/`、`scripts/` 与 AutoCAD/DXF 计划、验证、dry-run 和受控写入。
+- **AI 矢量文件桥**：Illustrator 接入、环境变量和预检见 [docs/05-codex-illustrator.md](docs/05-codex-illustrator.md)。
+- 剪映/CapCut 接入目前只做显式探针；找不到**剪映可执行文件**时返回不可用，不扫描私人草稿目录。
 
-| 目标 | 文档 | 安全验证 |
-| --- | --- | --- |
-| 总体定位 | [Skill / MCP / UXP 定位](docs/skill-mcp-uxp-positioning.md) | `python scripts\starbridge_preflight.py --markdown` |
-| Codex 跨软件控制 | [控制规划器](docs/codex-software-control-planner.md) | MCP `starbridge.control_plan` |
-| 操作状态闭环 | [Operation Context Envelope](docs/operation-context-envelope.md) | MCP `starbridge.operation_context` |
-| ComfyUI 队列背压 | [只读 Queue Snapshot](docs/comfyui-queue-snapshot.md) | MCP `comfyui.queue_snapshot` |
-| ComfyUI 实时进度 | [实时进度监控](docs/comfyui-progress-monitor.md) | MCP `comfyui.progress_monitor`；默认 plan-only，live 仅直接 loopback `/ws` |
-| ComfyUI 断线后状态 | [任务状态快照](docs/comfyui-job-snapshot.md) | MCP `comfyui.job_snapshot`；按显式 UUID 单任务查询，只返回脱敏终态摘要 |
-| 同类项目差距 | [先进能力与迭代优先级](docs/competitive-gap-analysis.md) | MCP `comfy.workflow_visualize` |
-| MCP 客户端接入 | [本地 MCP 配置](docs/local-mcp-setup.md) | `python -m starbridge_mcp.server tools --json --safe-only` |
-| ComfyUI | [ComfyUI 接入](docs/02-codex-comfyui.md) | `python examples\comfy_bridge\comfy_probe.py` |
-| CAD / AutoCAD | [CAD 接入](docs/01-codex-cad.md) | `python scripts\test_autocad_mcp.py` |
-| Photoshop | [Photoshop 接入](docs/03-codex-photoshop.md) | `npm.cmd run photoshop:diagnose` |
-| Illustrator | [Illustrator 接入](docs/05-codex-illustrator.md) | `npm.cmd run illustrator:preflight:plan` |
-| 彩色矢量验收 | [参考图彩色矢量化协议](docs/color-faithful-vectorization.md) | MCP `illustrator.color_vectorize_compare` |
-| Blender | [Blender 接入](docs/04-codex-blender.md) | `npm.cmd run blender:scene:plan` |
-| CapCut / 剪映 | [CapCut 接入](docs/06-codex-jianying.md) | `npm.cmd run capcut:draft:structure` |
+## 仓库导航
 
-不知道从哪里开始时，先看 [中文用途索引](docs/中文用途索引.md)。
-
-### 中文阅读指南与仓库区域标注
-
-| 中文区域 | 对应能力 |
+| 路径 | 用途 |
 | --- | --- |
-| 图像生成区 | ComfyUI workflow 校验、模板和生命周期摘要 |
-| 工程制图区 | CAD / AutoCAD plan、DXF dry-run 与受控写入 |
-| AI 矢量文件桥 | Illustrator preflight、UXP 与本地代理 |
-| 图像编辑区 | Photoshop UXP、Node Proxy 与 sandbox demo |
-| 视频草稿区 | CapCut / 剪映只读探针；未配置时报告“剪映可执行文件”状态 |
+| `.codex/skills/starbridge-*` | Codex Skills、安全边界与验证命令 |
+| `starbridge_mcp/` | MCP server、工具注册、任务引擎与安全层 |
+| `model_contracts/` | KORYAO 本地模型协议与 JSON Schema |
+| `apps/starbridge-desktop/` | Tauri 2 + React 桌面端 |
+| `apps/starbridge-site/` | 产品说明站点 |
+| `product/` | 机器可读产品事实与能力状态 |
+| `examples/` | 默认安全的桥接示例 |
+| `tests/` | 离线、集成、质量与安全测试 |
+| `docs/` | 架构、协议、接入和发布边界 |
 
-## 仓库结构
-
-```text
-.codex/skills/starbridge-*   Codex Skill 入口与安全路由
-starbridge_mcp/              MCP server、tool registry 与安全层
-examples/                    公开、参数化、默认安全的桥接示例
-uxp/                         Adobe UXP 插件原型
-node_proxy/                  UXP / MCP 本地代理示例
-cad-mcp-autocad/             AutoCAD MCP 子项目
-scripts/                     CAD 自动化与仓库验证脚本
-tests/                       离线测试与安全边界测试
-docs/                        接入协议、能力矩阵与中文索引
-```
-
-## 安全模型
-
-所有新增或调整的 MCP tool 都必须先有文档、schema 和测试，并满足：
-
-- dry-run 默认只生成计划；
-- safe-only 能过滤高风险能力；
-- 输出支持路径脱敏与 sanitizer；
-- 失败使用 soft-exit 或结构化 error；
-- 写入需要显式确认，并限制到 sandbox / output；
-- 不递归扫描私有目录，不读取未明确传入的素材或工程。
-
-本仓库不会接收 PSD、AI、DWG、`.blend`、CapCut 草稿、客户素材、模型权重、授权文件、token、Cookie、OAuth 缓存、真实安装路径或生成结果。
-
-安全策略和漏洞报告方式见 [SECURITY.md](SECURITY.md)。
-
-## 开发与验证
-
-提交前至少运行：
+## 发布前验证
 
 ```powershell
-python -m ruff check .
-python -m ruff format --check .
-python -m unittest discover -s tests
 python scripts/security_check.py
 python scripts/collect_bridge_status.py --json
 python examples/bridge_status.py --json --redact-paths --soft-exit
@@ -158,22 +192,37 @@ python scripts\starbridge_preflight.py --markdown
 python scripts\starbridge_preflight.py --write-report --soft-exit
 ```
 
-桌面软件相关命令需要 Windows、本机已安装且已授权的软件；Ubuntu CI 只验证跨平台逻辑、schema、安全边界和 soft-exit，不代表真实软件控制已经验证。
+CI 是每次合并的最终准线。历史功能基线曾通过 836 个 Python 测试、34 个前端测试和 27 个 Rust 测试，但任何新提交都应以本次 CI 结果为准。
 
-贡献规则见 [CONTRIBUTING.md](CONTRIBUTING.md)。PR 必须说明变更范围、已运行验证、未运行原因和私有资产泄漏风险。
+## 近期路线图
 
-## 发布资料
+1. 完成 Windows 签名安装包、SmartScreen、干净机器和升级回滚验证。
+2. 扩大 Photoshop / Illustrator 多版本、多语言和异常恢复矩阵。
+3. 将 ComfyUI、Blender、AutoCAD 与剪映从探针或实验状态推进到可复现闭环。
+4. 完善 KORYAO-C1 本地模型协议、失败降级和桌面可观测性。
+5. 建立正式隐私说明、支持流程、版本策略与商业交付边界。
 
-- [Adobe 安全演示索引](docs/adobe-demo-gallery.md)
-- [Adobe 演示 smoke test](docs/adobe-demo-smoke-test.md)
-- [版本记录](CHANGELOG.md)
-- [路线图](ROADMAP.md)
-- [发布说明草稿](RELEASE_NOTES_DRAFT.md)
+## 文档索引
 
-## English
+- [产品事实](docs/PRODUCT_FACTS.md)
+- [架构 V2](docs/ARCHITECTURE_V2.md)
+- [五模式矢量化](docs/vectorization-modes.md)
+- [像素重建](docs/exact-pixel-vectorization.md)
+- [Illustrator 接入](docs/05-codex-illustrator.md)
+- [Adobe 演示图库](docs/adobe-demo-gallery.md)
+- [Adobe 演示冒烟测试](docs/adobe-demo-smoke-test.md)
+- [发布说明草案](RELEASE_NOTES_DRAFT.md)
+- [安全说明](SECURITY.md)
+- [贡献指南](CONTRIBUTING.md)
 
-StarBridge is a Windows-first, local-first integration layer connecting AI clients to creative desktop software through Codex Skills, an MCP stdio server, and auditable Adobe UXP / local proxy bridges. Public examples default to read-only checks or dry-run plans; real writes require explicit confirmation and safe output boundaries.
+## 合作与反馈
 
-## License
+KORYAO 正在寻找愿意参与产品开发、视觉设计、测试验收、创意软件接入和商业落地的合作伙伴。
 
-[MIT](LICENSE)
+- 可复现缺陷与文档问题：请提交 GitHub Issue。
+- 商业合作与联合开发：`jianbaorui07@gmail.com`
+- 请勿在 Issue、PR 或附件中上传客户素材、私有授权文件和敏感路径。
+
+## 许可证
+
+当前版本采用 [KORYAO Proprietary License](LICENSE)。Copyright © 2025–2026 菅宝瑞，保留所有权利。历史版本仍适用其发布时随附的许可证条款。

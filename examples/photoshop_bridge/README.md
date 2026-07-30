@@ -2,6 +2,19 @@
 
 这个目录只保存可公开的 Photoshop 接入示例。脚本不包含个人路径、素材路径、账号信息或授权信息；运行时请通过参数传入输入和输出路径。
 
+图片自动重建为可编辑 PSD 的本地优先流水线见
+[`docs/image-to-editable-psd.md`](../../docs/image-to-editable-psd.md)。它支持内容哈希缓存、低置信局部复审、线稿纹理图分层和 Photoshop COM 组装；生成物只写入忽略目录。
+
+该流水线先生成客户问题，再按版本化 Layer Intent Profile 执行，避免围绕示例图写死规则。公开起点是 [`layer_intent.example.json`](layer_intent.example.json)；生产运行建议同时传入 `--intent-json` 和 `--require-intent`。客户未明确许可时，不记录任何学习样本。
+
+客户还可以单独同意 metrics-only GitHub 反馈：任务完成后向固定 Issue 或 Discussion 追加匿名指标评论。上传默认关闭，且发送前拒绝原图、像素、OCR/语义内容、文件名、源哈希、本机路径和账号信息。配置和真实 collector 验证见 [`docs/image-to-editable-psd.md`](../../docs/image-to-editable-psd.md)。
+
+公开跨类型研究使用逐项列明、许可核验的 Wikimedia Commons 请求文件
+[`public_dataset.example.json`](public_dataset.example.json)。下载需要 `--confirm-network` 和
+`--confirm-write`，图片与实验结果只写入已忽略的 `examples/output/photoshop/`。自动结果不作为训练
+标签；主体候选经过人工复核后只记录无像素数值特征。训练不足 20 个样本、8 个独立源图组或任一
+类别不足 5 个时只生成不足报告，不生成模型；达到门槛后也只能产生人工复审用候选模型。
+
 ## 区域零：统一安全 probe
 
 安全 probe 只检查 Windows、`PHOTOSHOP_EXE` 和 `Photoshop.Application` COM 类型，不打开 PSD，不保存图片：
@@ -213,3 +226,9 @@ powershell -ExecutionPolicy Bypass -File examples\photoshop_bridge\scripts\color
 ```
 
 默认不执行；缺少任一确认只返回计划或拒绝。脚本只连接已经运行的 Photoshop，不自动启动应用；输出为 `examples/output/photoshop/` 内的源图副本和 8-bit RGB PNG。中值降噪默认关闭，防止为了减少路径而无意改变原图颜色或细节。
+
+## 区域十三：统一 Photoshop 生产工作流
+
+`photoshop-production-v1` 已接入 Project、CreativeJob、任务中心和交付页。它不是任意 Photoshop 控制器，只执行固定流程：只读探测、复制活动文档、导入一张已托管且 hash 绑定的项目图片、可选调整画布与基础调色、可选主体导出，以及 PNG/JPEG/PSD 副本导出。
+
+生产 RPC 为 `ps.production.execute_confirmed`，协议 schema 位于 `protocols/node_proxy_rpc.v1.schema.json`，安全说明位于 `docs/photoshop-node-proxy-security.md`。输出只进入 StarBridge 应用数据目录，真实写入需要 CreativeJob 的明确确认。当前状态是 `experimental`：模拟 UXP 闭环已通过，真实授权 Photoshop 会话写入尚未验收，不能显示为稳定或已连接。

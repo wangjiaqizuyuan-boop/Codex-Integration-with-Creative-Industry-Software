@@ -1,11 +1,11 @@
-# v0.1.0-alpha 发布候选说明
+# v0.1.0-alpha.1 发布候选说明
 
-`v0.1.0-alpha` 是一个 Windows-first / local-first 的安全桥接候选版。它的目标是让 Codex / Cursor / Claude Code 等 AI coding agents 通过 MCP stdio 发现和调用本机创意软件相关的安全探针、workflow 校验、DXF dry-run plan 和受保护 sandbox demo。它不是破解工具，不绕过授权，不上传私有资产，不替代 Photoshop、Illustrator、AutoCAD、ComfyUI、Blender 或 CapCut。
+`v0.1.0-alpha.1` 是一个 Windows-first / local-first 的安全桥接候选版。它的目标是让 Codex / Cursor / Claude Code 等 AI coding agents 通过 MCP stdio 发现和调用本机创意软件相关的安全探针、workflow 校验、DXF dry-run plan 和受保护 sandbox demo。它不是签名公开发行版，不绕过授权，不上传私有资产，也不替代创意软件。
 
 ## What is included
 
 - MCP stdio server：支持 `initialize`、`tools/list`、`tools/call`，返回结构化 JSON。
-- Tool registry：区分 stable、experimental、planned，并暴露 risk metadata。
+- Tool registry：区分 `stable / experimental / planned / not_implemented`，并暴露 risk metadata；工具状态不代表真实软件连接。
 - `starbridge.status`：统一状态检查，read-only，CI safe。
 - `comfyui.workflow_validate`：离线校验公开 ComfyUI workflow JSON，read-only，CI safe。
 - AutoCAD / DXF headless：CAD plan validate、summarize、dry-run，以及显式确认后的 sandbox DXF 写入。
@@ -37,7 +37,7 @@ python -m starbridge_mcp.server evidence --validate --json
 python -m starbridge_mcp.server job-status --json
 ```
 
-CI runner 固定为 `windows-2022`，避免 `windows-latest` 漂移。缺少本机软件时，探针必须返回 `ok=false`、`warning` 或 soft-exit JSON，不能抛裸 traceback 导致 CI 失败。
+CI 当前使用 Ubuntu 与 `windows-latest`。缺少本机软件时，探针必须返回 `ok=false`、`warning` 或 soft-exit JSON，不能抛裸 traceback 导致 CI 失败。
 
 ## Security checklist
 
@@ -71,7 +71,7 @@ Photoshop、Illustrator、AutoCAD 和 CapCut 的真实桌面能力只在本机�
 - AutoCAD desktop automation 需要 Windows、AutoCAD、COM/pywin32 和授权；CI 不依赖这些条件。
 - Photoshop / Illustrator COM demo 需要本机授权 Adobe desktop；真实写入不是 release 级生产能力。
 - CapCut / Jianying 仍停留在 draft directory probe，不读取或写入草稿。
-- Blender 目前只做环境探针；safe scene script 仍是 planned。
+- Blender 已有环境探针和 safe scene plan；真实 Blender 执行、渲染和回读仍是 planned。
 
 ## Safe demo commands
 

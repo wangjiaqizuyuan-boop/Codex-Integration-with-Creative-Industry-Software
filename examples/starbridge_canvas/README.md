@@ -1,6 +1,6 @@
-# StarBridge Canvas
+# KORYAO Canvas
 
-StarBridge Canvas is a local realtime tldraw canvas for Codex-led creative workflows. It is adapted from the `codexhuabu` canvas prototype and stores canvas state inside the active project directory.
+KORYAO Canvas is a local realtime tldraw canvas for Codex-led creative workflows. It is adapted from the `codexhuabu` canvas prototype and stores canvas state inside the active project directory.
 
 ## Start
 

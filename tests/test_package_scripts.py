@@ -43,7 +43,14 @@ class PackageScriptsTest(unittest.TestCase):
                 "install:check:json",
                 "install:bootstrap",
                 "install:bootstrap:dry-run",
+                "install:quick",
+                "install:quick:dry-run",
+                "install:from-url",
+                "install:from-url:dry-run",
                 "mcp:registry:preview",
+                "codex:coordinator:self-test",
+                "codex:coordinator:plan",
+                "codex:coordinator:install:dry-run",
                 "package:python:check",
                 "status:manifest",
                 "status:manifest:json",
@@ -59,6 +66,15 @@ class PackageScriptsTest(unittest.TestCase):
                 "comfy:templates:from",
                 "comfy:lifecycle:template",
                 "comfy:txt2img",
+                "drawio:probe",
+                "drawio:capabilities",
+                "drawio:plan",
+                "drawio:demo",
+                "drawio:validate",
+                "drawio:rollback",
+                "drawio:export",
+                "drawio:handoff",
+                "drawio:batch",
                 "photoshop:probe",
                 "photoshop:node-proxy",
                 "photoshop:diagnose",
@@ -66,6 +82,8 @@ class PackageScriptsTest(unittest.TestCase):
                 "photoshop:demo:plan",
                 "photoshop:demo",
                 "photoshop:manifest",
+                "photoshop:layers",
+                "photoshop:layers:regression",
                 "photoshop:camera-raw:tune",
                 "photoshop:camera-raw:export",
                 "illustrator:info",
@@ -73,6 +91,10 @@ class PackageScriptsTest(unittest.TestCase):
                 "illustrator:realtime:adapter",
                 "illustrator:realtime:capture",
                 "illustrator:preflight:plan",
+                "illustrator:vectorize",
+                "illustrator:vectorize:offline",
+                "illustrator:vectorize:legacy-quantized",
+                "vector-app:start",
                 "illustrator:demo:plan",
                 "illustrator:demo",
                 "illustrator:manifest",
@@ -80,11 +102,21 @@ class PackageScriptsTest(unittest.TestCase):
                 "preflight",
                 "preflight:json",
                 "security:check",
+                "product:facts:check",
+                "text:encoding:check",
                 "canvas:dev",
                 "canvas:build",
                 "canvas:mcp",
                 "frontend:dev",
                 "frontend:build",
+                "desktop:install",
+                "desktop:test",
+                "desktop:build",
+                "desktop:prerequisites",
+                "desktop:sidecar:build",
+                "desktop:sidecar:test",
+                "brand:build",
+                "site:build",
                 "app:dev",
                 "test",
                 "test:pytest",
@@ -126,6 +158,16 @@ class PackageScriptsTest(unittest.TestCase):
         ):
             self.assertIn(name, self.scripts)
 
+    def test_illustrator_exact_vector_shortcut_is_primary(self) -> None:
+        self.assertEqual(
+            "python examples/illustrator_bridge/scripts/exact_pixel_vector.py",
+            self.scripts["illustrator:vectorize:offline"],
+        )
+        self.assertEqual(
+            "python examples/illustrator_bridge/scripts/trace_photo_preview.py",
+            self.scripts["illustrator:vectorize:legacy-quantized"],
+        )
+
     def test_comfy_template_shortcuts_are_registered(self) -> None:
         self.assertEqual(
             "python examples/comfy_bridge/workflow_templates.py list --json",
@@ -150,7 +192,19 @@ class PackageScriptsTest(unittest.TestCase):
         self.assertIsNotNone(match)
         extras_block = match.group(1)
 
-        for extra in ("dev", "cad", "comfy", "adobe"):
+        for extra in (
+            "dev",
+            "cad",
+            "comfy",
+            "adobe",
+            "image-to-psd",
+            "illustrator-trace",
+            "illustrator-vector",
+            "vectorization",
+            "vector60",
+            "vector-refinement",
+            "vector-app",
+        ):
             self.assertRegex(extras_block, rf"(?m)^{extra}\s*=")
         self.assertIn("pytest>=8", extras_block)
         self.assertIn("ezdxf>=1.3", extras_block)

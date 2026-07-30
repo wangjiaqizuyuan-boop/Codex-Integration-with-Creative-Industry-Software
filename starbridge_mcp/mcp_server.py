@@ -8,6 +8,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from starbridge_mcp.adapters.drawio import TOOL_DEFINITIONS as DRAWIO_TOOL_DEFINITIONS
+from starbridge_mcp.adapters.drawio import TOOL_HANDLERS as DRAWIO_TOOL_HANDLERS
 from starbridge_mcp.adapters.photoshop import TOOL_DEFINITIONS as PHOTOSHOP_V1_TOOL_DEFINITIONS
 from starbridge_mcp.adapters.photoshop import TOOL_HANDLERS as PHOTOSHOP_V1_TOOL_HANDLERS
 from starbridge_mcp.bridges import autocad_dxf
@@ -18,12 +20,18 @@ from starbridge_mcp.bridges.blender_safe_scene import (
 from starbridge_mcp.bridges.capcut_draft_structure import draft_structure_summary
 from starbridge_mcp.bridges.illustrator_preflight import preflight_summary
 from starbridge_mcp.core.color_preprocess import build_color_preprocess_plan
+from starbridge_mcp.core.color_vector_backend import build_color_vector_backend_plan
 from starbridge_mcp.core.color_vector_compare import compare_color_vectorization_files
+from starbridge_mcp.core.color_vector_repair import (
+    advance_color_vector_iteration,
+    build_color_vector_repair_plan,
+)
 from starbridge_mcp.core.color_vectorization import (
     build_color_vectorization_plan,
     validate_color_vectorization_metrics,
 )
 from starbridge_mcp.core.control_planner import build_control_plan
+from starbridge_mcp.core.desktop_connections import pair_desktop_session
 from starbridge_mcp.core.evidence import (
     DEFAULT_MANIFEST_FILENAME,
     ValidationResult,
@@ -86,6 +94,7 @@ ToolHandler = Callable[[JsonObject], JsonObject]
 
 BRIDGE_ENUM = [
     "all",
+    "diagramforge",
     "comfyui",
     "blender",
     "autocad",
@@ -197,7 +206,7 @@ def _standard_tool(
 TOOL_DEFINITIONS: list[JsonObject] = [
     _standard_tool(
         name="starbridge.status",
-        title="StarBridge Status",
+        title="KORYAO Status",
         description="返回全部或单个本地创意软件 bridge 的统一状态。只读，不打开用户文件。",
         input_schema=_object_schema(
             {
@@ -222,7 +231,7 @@ TOOL_DEFINITIONS: list[JsonObject] = [
     ),
     _standard_tool(
         name="starbridge.probe",
-        title="StarBridge Probe",
+        title="KORYAO Probe",
         description="对单个 bridge 做只读探针检查。等价于 status + bridge filter。",
         input_schema=_object_schema(
             {
@@ -237,10 +246,43 @@ TOOL_DEFINITIONS: list[JsonObject] = [
             required=["bridge"],
         ),
     ),
+    _standard_tool(
+        name="starbridge.desktop_pair",
+        title="Pair KORYAO Session",
+        description=(
+            "使用连接中心当前显示的一次性配对码关联正在运行的 KORYAO 桌面会话。"
+            "只写入可撤销的本地配对回执，不读取 Codex 凭据、用户文件或创意软件文档。"
+        ),
+        input_schema=_object_schema(
+            {
+                "pairing_code": {
+                    "type": "string",
+                    "pattern": "^[A-Z2-9]{8}$",
+                    "description": "KORYAO 连接中心当前显示的 8 位配对码。",
+                },
+                "confirm_pairing": {
+                    "type": "boolean",
+                    "description": "必须明确为 true，确认关联当前桌面会话。",
+                },
+                "confirm_write": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "必须明确为 true，确认写入可撤销的本地配对回执。",
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "默认只验证配对计划；实际关联必须明确设为 false。",
+                },
+            },
+            required=["pairing_code", "confirm_pairing", "confirm_write"],
+        ),
+        read_only=False,
+    ),
     {
         "name": "starbridge.tools",
-        "title": "StarBridge Tool Registry",
-        "description": "列出 StarBridge 当前已实现、实验中和规划中的工具能力。",
+        "title": "KORYAO Tool Registry",
+        "description": "列出 KORYAO 当前已实现、实验中和规划中的工具能力。",
         "inputSchema": _object_schema(
             {
                 "bridge": {"type": "string", "enum": BRIDGE_ENUM, "default": "all"},
@@ -255,7 +297,7 @@ TOOL_DEFINITIONS: list[JsonObject] = [
     },
     {
         "name": "starbridge.control_plan",
-        "title": "StarBridge Codex Control Plan",
+        "title": "KORYAO Codex Control Plan",
         "description": "根据自然语言目标选择创意软件桥，返回只读控制计划、质量门和确认边界。不会启动软件或读取文件。",
         "inputSchema": _object_schema(
             {
@@ -283,7 +325,7 @@ TOOL_DEFINITIONS: list[JsonObject] = [
     },
     {
         "name": "starbridge.safe_roots",
-        "title": "StarBridge Safe Roots",
+        "title": "KORYAO Safe Roots",
         "description": "返回仓库相对安全根目录、可写输出边界和 MCP roots 对齐建议。",
         "inputSchema": _object_schema(
             {
@@ -294,7 +336,7 @@ TOOL_DEFINITIONS: list[JsonObject] = [
     },
     {
         "name": "starbridge.evidence_init",
-        "title": "StarBridge Evidence Init",
+        "title": "KORYAO Evidence Init",
         "description": "Return a sanitized EvidenceManifest preview and default manifest path without launching desktop software.",
         "inputSchema": _object_schema(
             {
@@ -306,7 +348,7 @@ TOOL_DEFINITIONS: list[JsonObject] = [
     },
     {
         "name": "starbridge.evidence_validate",
-        "title": "StarBridge Evidence Validate",
+        "title": "KORYAO Evidence Validate",
         "description": "Validate the current redacted EvidenceManifest shape and path boundary.",
         "inputSchema": _object_schema(
             {
@@ -320,7 +362,7 @@ TOOL_DEFINITIONS: list[JsonObject] = [
     },
     {
         "name": "starbridge.job_status",
-        "title": "StarBridge Job Status",
+        "title": "KORYAO Job Status",
         "description": "Return a unified queued/running/completed-style job summary from the current evidence manifest.",
         "inputSchema": _object_schema(
             {
@@ -333,7 +375,7 @@ TOOL_DEFINITIONS: list[JsonObject] = [
     },
     {
         "name": "starbridge.operation_context",
-        "title": "StarBridge Operation Context",
+        "title": "KORYAO Operation Context",
         "description": (
             "Build a sanitized, chainable before/after state envelope from caller-supplied "
             "safe metrics. This tool does not inspect local software, files, or networks."
@@ -344,8 +386,8 @@ TOOL_DEFINITIONS: list[JsonObject] = [
     },
     {
         "name": "starbridge.recipe_list",
-        "title": "StarBridge Recipe List",
-        "description": "List safe cross-bridge StarBridge recipes. This is plan-only and does not launch desktop software.",
+        "title": "KORYAO Recipe List",
+        "description": "List safe cross-bridge KORYAO recipes. This is plan-only and does not launch desktop software.",
         "inputSchema": _object_schema(
             {
                 "bridge": {"type": "string", "enum": BRIDGE_ENUM, "default": "all"},
@@ -355,7 +397,7 @@ TOOL_DEFINITIONS: list[JsonObject] = [
     },
     {
         "name": "starbridge.recipe_plan",
-        "title": "StarBridge Recipe Plan",
+        "title": "KORYAO Recipe Plan",
         "description": "Return a dry-run action plan, quality gates, and evidence requirements for one cross-bridge recipe.",
         "inputSchema": _object_schema(
             {
@@ -368,7 +410,7 @@ TOOL_DEFINITIONS: list[JsonObject] = [
     },
     {
         "name": "starbridge.recipe_evidence",
-        "title": "StarBridge Recipe Evidence",
+        "title": "KORYAO Recipe Evidence",
         "description": "Preview a standardized EvidenceManifest for one recipe, including quality gates and asset manifest entries.",
         "inputSchema": _object_schema(
             {
@@ -545,6 +587,148 @@ TOOL_DEFINITIONS: list[JsonObject] = [
                     "description": "Explicitly confirms queue submission; execution failure still reports submitted=true.",
                 },
             }
+        ),
+        read_only=False,
+    ),
+    {
+        "name": "comfyui.generation_result",
+        "title": "ComfyUI Generation Result",
+        "description": (
+            "Resume bounded polling for one explicit ComfyUI prompt ID. Reads only loopback "
+            "/history/{prompt_id} and returns terminal state plus stable asset IDs and basename-only output metadata; "
+            "never submits, returns image bytes, workflow, prompt, model, or traceback data."
+        ),
+        "inputSchema": _object_schema(
+            {
+                "prompt_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9_-]+$",
+                },
+                "comfy_url": {"type": "string", "default": "http://127.0.0.1:8188"},
+                "timeout": {"type": "integer", "default": 8, "minimum": 1, "maximum": 15},
+                "wait_seconds": {
+                    "type": "integer",
+                    "default": 0,
+                    "minimum": 0,
+                    "maximum": 60,
+                },
+                "poll_interval": {
+                    "type": "number",
+                    "default": 1.0,
+                    "minimum": 0.2,
+                    "maximum": 5.0,
+                },
+            },
+            required=["prompt_id"],
+        ),
+        "outputSchema": STARBRIDGE_OUTPUT_SCHEMA,
+        "annotations": _safe_read_annotations(requires_local_software=True),
+    },
+    {
+        "name": "comfyui.generation_cancel",
+        "title": "ComfyUI Generation Cancel",
+        "description": (
+            "Cancel one explicit running or pending ComfyUI job without affecting unrelated jobs. "
+            "Defaults to a network-free dry-run; confirm_cancel=true is required to call the "
+            "loopback-only per-job cancellation endpoint. Never falls back to global /interrupt."
+        ),
+        "inputSchema": _object_schema(
+            {
+                "prompt_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9_-]+$",
+                },
+                "comfy_url": {"type": "string", "default": "http://127.0.0.1:8188"},
+                "timeout": {"type": "integer", "default": 8, "minimum": 1, "maximum": 15},
+                "confirm_cancel": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Explicitly confirms cancellation of this job ID only.",
+                },
+            },
+            required=["prompt_id"],
+        ),
+        "outputSchema": STARBRIDGE_OUTPUT_SCHEMA,
+        "annotations": _guarded_write_annotations(
+            risk_level="guarded_local_process",
+            requires_local_software=True,
+        ),
+    },
+    _standard_tool(
+        name="comfyui.asset_list",
+        title="ComfyUI Asset List",
+        description=(
+            "List bounded current-session KORYAO asset IDs newest-first. Returns only "
+            "regeneration eligibility, remaining TTL, and workflow hashes; never returns "
+            "workflow, prompt, model, filename, image, or path data."
+        ),
+        input_schema=_object_schema(
+            {
+                "limit": {
+                    "type": "integer",
+                    "default": 20,
+                    "minimum": 1,
+                    "maximum": 100,
+                }
+            }
+        ),
+    ),
+    _standard_tool(
+        name="comfyui.asset_metadata",
+        title="ComfyUI Asset Metadata",
+        description=(
+            "Check whether one stable KORYAO asset ID still has usable current-session "
+            "in-memory provenance. Returns only availability, remaining TTL, workflow hash, and "
+            "supported regeneration override names; never returns workflow, prompt, model, file, or path data."
+        ),
+        input_schema=_object_schema(
+            {
+                "asset_id": {
+                    "type": "string",
+                    "pattern": "^asset_[0-9a-f]{16}$",
+                }
+            },
+            required=["asset_id"],
+        ),
+    ),
+    _standard_tool(
+        name="comfyui.regenerate",
+        title="ComfyUI Regenerate",
+        description=(
+            "Replay current-session in-memory provenance for one KORYAO asset ID with bounded "
+            "txt2img overrides. Defaults to dry-run; confirm_run=true is required to submit a new "
+            "loopback ComfyUI job. Stored workflow and prompt data are never returned or persisted."
+        ),
+        input_schema=_object_schema(
+            {
+                "asset_id": {
+                    "type": "string",
+                    "pattern": "^asset_[0-9a-f]{16}$",
+                },
+                "prompt": {"type": "string"},
+                "negative_prompt": {"type": "string"},
+                "width": {"type": "integer", "minimum": 64, "maximum": 4096},
+                "height": {"type": "integer", "minimum": 64, "maximum": 4096},
+                "seed": {"type": "integer", "minimum": 0},
+                "steps": {"type": "integer", "minimum": 1, "maximum": 150},
+                "cfg": {"type": "number", "minimum": 0.1, "maximum": 30.0},
+                "sampler": {"type": "string"},
+                "scheduler": {"type": "string"},
+                "comfy_url": {"type": "string", "default": "http://127.0.0.1:8188"},
+                "timeout": {"type": "integer", "default": 30, "minimum": 1, "maximum": 300},
+                "wait_seconds": {
+                    "type": "integer",
+                    "default": 10,
+                    "minimum": 0,
+                    "maximum": 600,
+                },
+                "confirm_run": {"type": "boolean", "default": False},
+            },
+            required=["asset_id"],
         ),
         read_only=False,
     ),
@@ -1019,6 +1203,36 @@ TOOL_DEFINITIONS: list[JsonObject] = [
         ),
     ),
     _standard_tool(
+        name="illustrator.color_vectorize_backend_plan",
+        title="Plan Color Vectorization Backend",
+        description=(
+            "根据脱敏素材特征保守选择 Illustrator 原生或 headless SVG fallback；"
+            "纯内存 dry-run，不读取图片、不探测环境、不执行软件或脚本。"
+        ),
+        input_schema=_object_schema(
+            {
+                "reference_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"},
+                "reference_authorized": {"type": "boolean"},
+                "backend_preference": {
+                    "type": "string",
+                    "enum": ["auto", "native_illustrator", "headless_svg"],
+                    "default": "auto",
+                },
+                "artwork_kind": {
+                    "type": "string",
+                    "enum": ["flat_artwork", "illustration", "photo", "mixed"],
+                    "default": "mixed",
+                },
+                "requires_gradient_fidelity": {"type": "boolean", "default": False},
+                "requires_transparency": {"type": "boolean", "default": False},
+                "requires_text_editability": {"type": "boolean", "default": False},
+                "illustrator_available": {"type": "boolean", "default": False},
+                "headless_dependencies_available": {"type": "boolean", "default": False},
+            },
+            required=["reference_id", "reference_authorized"],
+        ),
+    ),
+    _standard_tool(
         name="illustrator.color_vectorize_plan",
         title="Plan Color-Faithful Illustrator Vectorization",
         description=(
@@ -1254,6 +1468,247 @@ TOOL_DEFINITIONS: list[JsonObject] = [
         ),
     ),
     _standard_tool(
+        name="illustrator.color_vectorize_repair_plan",
+        title="Plan Bounded Color Vector Repair",
+        description=(
+            "把脱敏的彩色矢量比较 findings 编译为最多三轮的确定性参数修复计划；"
+            "不读取文件、不启动 Adobe、不执行脚本。"
+        ),
+        input_schema=_object_schema(
+            {
+                "reference_id": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+                },
+                "reference_authorized": {"type": "boolean"},
+                "source_media_type": {
+                    "type": "string",
+                    "enum": ["image/png", "image/jpeg"],
+                    "default": "image/png",
+                },
+                "strategy": {
+                    "type": "string",
+                    "enum": ["local_illustrator_trace", "hybrid"],
+                    "default": "hybrid",
+                },
+                "repair_round": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3,
+                    "default": 1,
+                },
+                "max_repair_rounds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3,
+                    "default": 3,
+                },
+                "comparison": _object_schema(
+                    {
+                        "verdict": {
+                            "type": "string",
+                            "enum": ["pass", "repair_needed", "blocked"],
+                        },
+                        "hard_gates": _object_schema(
+                            {
+                                "reference_authorized": {"type": "boolean"},
+                                "primary_silhouette_present": {"type": "boolean"},
+                                "topology_valid": {"type": "boolean"},
+                                "editable_vector_present": {"type": "boolean"},
+                                "safe_output_scope": {"type": "boolean"},
+                            },
+                            required=[
+                                "reference_authorized",
+                                "primary_silhouette_present",
+                                "topology_valid",
+                                "editable_vector_present",
+                                "safe_output_scope",
+                            ],
+                        ),
+                        "findings": {
+                            "type": "array",
+                            "items": _object_schema(
+                                {
+                                    "code": {
+                                        "type": "string",
+                                        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                                    },
+                                    "severity": {
+                                        "type": "string",
+                                        "enum": ["info", "warn", "critical"],
+                                    },
+                                    "message": {"type": "string", "maxLength": 512},
+                                },
+                                required=["code", "severity", "message"],
+                            ),
+                        },
+                    },
+                    required=["verdict", "hard_gates", "findings"],
+                ),
+                "current_trace": _object_schema(
+                    {
+                        "max_colors": {"type": "integer", "minimum": 2, "maximum": 256},
+                        "path_fitting": {"type": "number", "minimum": 0, "maximum": 10},
+                        "min_area": {"type": "integer", "minimum": 1, "maximum": 1000},
+                        "preprocess_blur": {"type": "number", "minimum": 0, "maximum": 2},
+                        "ignore_white": {"type": "boolean"},
+                        "output_to_swatches": {"type": "boolean"},
+                    },
+                    required=[
+                        "max_colors",
+                        "path_fitting",
+                        "min_area",
+                        "preprocess_blur",
+                        "ignore_white",
+                        "output_to_swatches",
+                    ],
+                ),
+                "current_preprocess": _object_schema(
+                    {
+                        "photoshop_preprocess": {"type": "boolean"},
+                        "normalize_srgb": {"type": "boolean"},
+                        "max_dimension": {"type": "integer", "minimum": 256, "maximum": 8192},
+                        "median_radius": {"type": "integer", "minimum": 0, "maximum": 5},
+                    },
+                    required=[
+                        "photoshop_preprocess",
+                        "normalize_srgb",
+                        "max_dimension",
+                        "median_radius",
+                    ],
+                ),
+            },
+            required=[
+                "reference_id",
+                "reference_authorized",
+                "comparison",
+                "current_trace",
+                "current_preprocess",
+            ],
+        ),
+    ),
+    _standard_tool(
+        name="illustrator.color_vectorize_advance",
+        title="Advance Bounded Color Vector Iteration",
+        description=(
+            "把一次 execute 后的脱敏 compare 结果强制收敛为完成、下一轮 repair 或终止；"
+            "纯内存处理，不读取图片、不启动 Adobe、不写文件。"
+        ),
+        input_schema=_object_schema(
+            {
+                "reference_id": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+                },
+                "reference_authorized": {"type": "boolean"},
+                "source_media_type": {
+                    "type": "string",
+                    "enum": ["image/png", "image/jpeg"],
+                    "default": "image/png",
+                },
+                "strategy": {
+                    "type": "string",
+                    "enum": ["local_illustrator_trace", "hybrid"],
+                    "default": "hybrid",
+                },
+                "executed_round": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3,
+                },
+                "max_repair_rounds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 3,
+                    "default": 3,
+                },
+                "comparison": _object_schema(
+                    {
+                        "verdict": {
+                            "type": "string",
+                            "enum": ["pass", "repair_needed", "blocked"],
+                        },
+                        "hard_gates": _object_schema(
+                            {
+                                "reference_authorized": {"type": "boolean"},
+                                "primary_silhouette_present": {"type": "boolean"},
+                                "topology_valid": {"type": "boolean"},
+                                "editable_vector_present": {"type": "boolean"},
+                                "safe_output_scope": {"type": "boolean"},
+                            },
+                            required=[
+                                "reference_authorized",
+                                "primary_silhouette_present",
+                                "topology_valid",
+                                "editable_vector_present",
+                                "safe_output_scope",
+                            ],
+                        ),
+                        "findings": {
+                            "type": "array",
+                            "maxItems": 128,
+                            "items": _object_schema(
+                                {
+                                    "code": {
+                                        "type": "string",
+                                        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                                    },
+                                    "severity": {
+                                        "type": "string",
+                                        "enum": ["info", "warn", "critical"],
+                                    },
+                                    "message": {"type": "string", "maxLength": 512},
+                                },
+                                required=["code", "severity", "message"],
+                            ),
+                        },
+                    },
+                    required=["verdict", "hard_gates", "findings"],
+                ),
+                "current_trace": _object_schema(
+                    {
+                        "max_colors": {"type": "integer", "minimum": 2, "maximum": 256},
+                        "path_fitting": {"type": "number", "minimum": 0, "maximum": 10},
+                        "min_area": {"type": "integer", "minimum": 1, "maximum": 1000},
+                        "preprocess_blur": {"type": "number", "minimum": 0, "maximum": 2},
+                        "ignore_white": {"type": "boolean"},
+                        "output_to_swatches": {"type": "boolean"},
+                    },
+                    required=[
+                        "max_colors",
+                        "path_fitting",
+                        "min_area",
+                        "preprocess_blur",
+                        "ignore_white",
+                        "output_to_swatches",
+                    ],
+                ),
+                "current_preprocess": _object_schema(
+                    {
+                        "photoshop_preprocess": {"type": "boolean"},
+                        "normalize_srgb": {"type": "boolean"},
+                        "max_dimension": {"type": "integer", "minimum": 256, "maximum": 8192},
+                        "median_radius": {"type": "integer", "minimum": 0, "maximum": 5},
+                    },
+                    required=[
+                        "photoshop_preprocess",
+                        "normalize_srgb",
+                        "max_dimension",
+                        "median_radius",
+                    ],
+                ),
+            },
+            required=[
+                "reference_id",
+                "reference_authorized",
+                "executed_round",
+                "comparison",
+                "current_trace",
+                "current_preprocess",
+            ],
+        ),
+    ),
+    _standard_tool(
         name="illustrator.color_vectorize_execute",
         title="Execute Guarded Illustrator Color Trace",
         description=(
@@ -1414,6 +1869,7 @@ TOOL_DEFINITIONS: list[JsonObject] = [
     ),
 ]
 
+TOOL_DEFINITIONS.extend(DRAWIO_TOOL_DEFINITIONS)
 TOOL_DEFINITIONS.extend(PHOTOSHOP_V1_TOOL_DEFINITIONS)
 
 
@@ -1470,7 +1926,9 @@ def _enrich_tool_annotations() -> None:
         )
         tool["annotations"] = annotations
         if not read_only:
-            if tool["name"] == "comfyui.agent_run":
+            if tool["name"] == "starbridge.desktop_pair":
+                properties.setdefault("dry_run", {"type": "boolean", "default": True})
+            elif tool["name"] == "comfyui.agent_run":
                 properties.setdefault("confirm_run", {"type": "boolean", "default": False})
             else:
                 properties.setdefault("dry_run", {"type": "boolean", "default": True})
@@ -1504,6 +1962,15 @@ def _handle_probe(arguments: JsonObject) -> JsonObject:
     if not arguments.get("bridge"):
         raise ValueError("bridge is required")
     return build_response(_namespace_for_status(arguments, probe_default=True))
+
+
+def _handle_desktop_pair(arguments: JsonObject) -> JsonObject:
+    return pair_desktop_session(
+        pairing_code=str(arguments.get("pairing_code") or ""),
+        confirm_pairing=bool(arguments.get("confirm_pairing", False))
+        and bool(arguments.get("confirm_write", False)),
+        dry_run=bool(arguments.get("dry_run", True)),
+    )
 
 
 def _handle_tools(arguments: JsonObject) -> JsonObject:
@@ -2034,6 +2501,36 @@ def _handle_comfy_agent_run(arguments: JsonObject) -> JsonObject:
     from examples.comfy_bridge.workflow_agent import agent_run
 
     return agent_run(arguments)
+
+
+def _handle_comfy_generation_result(arguments: JsonObject) -> JsonObject:
+    from examples.comfy_bridge.workflow_agent import generation_result
+
+    return generation_result(arguments)
+
+
+def _handle_comfy_generation_cancel(arguments: JsonObject) -> JsonObject:
+    from examples.comfy_bridge.workflow_agent import generation_cancel
+
+    return generation_cancel(arguments)
+
+
+def _handle_comfy_asset_metadata(arguments: JsonObject) -> JsonObject:
+    from examples.comfy_bridge.workflow_agent import asset_metadata
+
+    return asset_metadata(arguments)
+
+
+def _handle_comfy_asset_list(arguments: JsonObject) -> JsonObject:
+    from examples.comfy_bridge.workflow_agent import asset_list
+
+    return asset_list(arguments)
+
+
+def _handle_comfy_regenerate(arguments: JsonObject) -> JsonObject:
+    from examples.comfy_bridge.workflow_agent import regenerate
+
+    return regenerate(arguments)
 
 
 def _handle_comfy_workflow_draft(arguments: JsonObject) -> JsonObject:
@@ -3145,6 +3642,7 @@ def _handle_photoshop_run(arguments: JsonObject) -> JsonObject:
 TOOL_HANDLERS: dict[str, ToolHandler] = {
     "starbridge.status": _handle_status,
     "starbridge.probe": _handle_probe,
+    "starbridge.desktop_pair": _handle_desktop_pair,
     "starbridge.tools": _handle_tools,
     "starbridge.control_plan": _handle_control_plan,
     "starbridge.safe_roots": _handle_safe_roots,
@@ -3164,6 +3662,11 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "comfyui.workflow_build": _handle_comfy_workflow_build,
     "comfyui.workflow_repair": _handle_comfy_workflow_repair,
     "comfyui.agent_run": _handle_comfy_agent_run,
+    "comfyui.generation_result": _handle_comfy_generation_result,
+    "comfyui.generation_cancel": _handle_comfy_generation_cancel,
+    "comfyui.asset_list": _handle_comfy_asset_list,
+    "comfyui.asset_metadata": _handle_comfy_asset_metadata,
+    "comfyui.regenerate": _handle_comfy_regenerate,
     "comfy.workflow_draft": _handle_comfy_workflow_draft,
     "comfy.workflow_compose": _handle_comfy_workflow_compose,
     "comfy.workflow_template_list": _handle_comfy_workflow_template_list,
@@ -3222,12 +3725,15 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
         arguments.get("document_summary") or {}
     ),
     "illustrator.color_vectorize_plan": build_color_vectorization_plan,
+    "illustrator.color_vectorize_backend_plan": build_color_vector_backend_plan,
     "illustrator.color_vectorize_validate": lambda arguments: validate_color_vectorization_metrics(
         metrics=arguments.get("metrics") or {},
         hard_gates=arguments.get("hard_gates") or {},
         quality_gates=arguments.get("quality_gates"),
     ),
     "illustrator.color_vectorize_compare": _handle_illustrator_color_vectorize_compare,
+    "illustrator.color_vectorize_repair_plan": build_color_vector_repair_plan,
+    "illustrator.color_vectorize_advance": advance_color_vector_iteration,
     "illustrator.color_vectorize_execute": _handle_illustrator_color_vectorize_execute,
     "jianying_capcut.draft_probe": lambda _arguments: _handle_python_probe(
         bridge="jianying_capcut",
@@ -3251,6 +3757,7 @@ TOOL_HANDLERS: dict[str, ToolHandler] = {
     "autocad_dxf.write_dxf": _handle_write_dxf,
 }
 
+TOOL_HANDLERS.update(DRAWIO_TOOL_HANDLERS)
 TOOL_HANDLERS.update(PHOTOSHOP_V1_TOOL_HANDLERS)
 
 
@@ -3355,7 +3862,7 @@ def handle_request(message: JsonObject) -> JsonObject | None:
 
 
 def encode_message(message: JsonObject) -> str:
-    return json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n"
+    return json.dumps(message, ensure_ascii=True, separators=(",", ":")) + "\n"
 
 
 def serve_stdio(stdin: Any = None, stdout: Any = None) -> int:

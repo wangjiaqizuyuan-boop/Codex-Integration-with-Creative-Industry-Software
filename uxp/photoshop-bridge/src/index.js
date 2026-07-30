@@ -4,6 +4,7 @@ import { executeTypedBatchPlay, runModalJob, validateBatchPlay } from "./batchpl
 const photoshop = require("photoshop");
 const { action, app } = photoshop;
 const uxp = require("uxp");
+const { entrypoints } = uxp;
 const storage = uxp.storage;
 const localFileSystem = storage.localFileSystem;
 
@@ -151,7 +152,7 @@ function cameraRawPlan(params = {}) {
         export_after_apply: Boolean(rawOutput.export_after_apply),
       },
       descriptor_status: "missing",
-      execution_path: ["Codex", "StarBridge MCP", "Node Proxy", "UXP Plugin", "Photoshop"],
+      execution_path: ["Codex", "KORYAO MCP", "Node Proxy", "UXP Plugin", "Photoshop"],
     },
   };
 }
@@ -207,7 +208,7 @@ async function cameraRawTune(params) {
     };
   }
   if (params?.descriptor_fixture_verified === true && Array.isArray(params?.descriptors) && params.descriptors.length) {
-    return runModalJob("ps.camera_raw.tune", { commandName: "StarBridge Camera Raw Tune" }, async () => {
+    return runModalJob("ps.camera_raw.tune", { commandName: "KORYAO Camera Raw Tune" }, async () => {
       const batchplayResult = await action.batchPlay(params.descriptors, { synchronousExecution: true, modalBehavior: "execute" });
       return {
         ok: true,
@@ -223,7 +224,7 @@ async function cameraRawTune(params) {
       };
     });
   }
-  return runModalJob("ps.camera_raw.tune", { commandName: "StarBridge Camera Raw Tune" }, async () => ({
+  return runModalJob("ps.camera_raw.tune", { commandName: "KORYAO Camera Raw Tune" }, async () => ({
     ok: false,
     dry_run: false,
     confirm_apply: true,
@@ -335,6 +336,217 @@ async function saveActiveDocumentAsPng(document, absolutePath) {
   return fileEntry;
 }
 
+async function activateDocument(document) {
+  if (typeof document?.activate === "function") {
+    await document.activate();
+  }
+}
+
+async function closeDocumentWithoutSaving(document) {
+  if (typeof document?.closeWithoutSaving === "function") {
+    await document.closeWithoutSaving();
+    return;
+  }
+  throw new Error("photoshop_close_without_saving_unavailable");
+}
+
+async function saveProductionCopy(document, absolutePath, format) {
+  const fileEntry = await resolveOutputEntry(absolutePath);
+  const saveAs = document?.saveAs || document?.api?.saveAs;
+  if (!saveAs) throw new Error("photoshop_save_as_unavailable");
+  if (format === "png" || format === "subject") {
+    if (typeof saveAs.png !== "function") throw new Error("photoshop_png_export_unavailable");
+    await saveAs.png(fileEntry, { compression: 6, interlaced: false }, true);
+  } else if (format === "jpeg") {
+    if (typeof saveAs.jpg !== "function") throw new Error("photoshop_jpeg_export_unavailable");
+    await saveAs.jpg(fileEntry, { quality: 10 }, true);
+  } else if (format === "psd") {
+    if (typeof saveAs.psd !== "function") throw new Error("photoshop_psd_export_unavailable");
+    await saveAs.psd(fileEntry, {}, true);
+  } else {
+    throw new Error("unsupported_production_format");
+  }
+}
+
+async function validateNativePsdReopen(absolutePath, sandboxDocument) {
+  const entry = await localFileSystem.getEntryWithUrl(toFileUrl(absolutePath));
+  if (!entry || !entry.isFile) throw new Error("photoshop_psd_reopen_file_unavailable");
+  const reopened = await app.open(entry);
+  try {
+    const width = Number(reopened?.width || 0);
+    const height = Number(reopened?.height || 0);
+    const layerCount = Array.isArray(reopened?.layers) ? reopened.layers.length : 0;
+    const expectedWidth = Number(sandboxDocument?.width || 0);
+    const expectedHeight = Number(sandboxDocument?.height || 0);
+    const expectedLayerCount = Array.isArray(sandboxDocument?.layers)
+      ? sandboxDocument.layers.length
+      : 0;
+    if (
+      width <= 0
+      || height <= 0
+      || width !== expectedWidth
+      || height !== expectedHeight
+      || layerCount < 1
+      || layerCount !== expectedLayerCount
+    ) throw new Error("photoshop_psd_reopen_invalid_document");
+    return {
+      validated: true,
+      width,
+      height,
+      layer_count: layerCount,
+    };
+  } finally {
+    await closeDocumentWithoutSaving(reopened);
+    await activateDocument(sandboxDocument);
+  }
+}
+
+function assertProductionParams(params) {
+  if (params?.confirm_write !== true || params?.managed_source_verified !== true || params?.safe_roots_verified !== true) {
+    throw new Error("production_proxy_verification_required");
+  }
+  const sourcePath = String(params?.source_path || "");
+  const stagingOutputs = params?.staging_outputs || {};
+  if (!sourcePath || !Object.keys(stagingOutputs).length) throw new Error("production_paths_required");
+  return { sourcePath, stagingOutputs };
+}
+
+async function importProjectLayer(sandboxDocument, sourcePath) {
+  const sourceEntry = await localFileSystem.getEntryWithUrl(toFileUrl(sourcePath));
+  if (!sourceEntry || !sourceEntry.isFile) throw new Error("managed_source_file_unavailable");
+  const sourceDocument = await app.open(sourceEntry);
+  try {
+    const sourceLayer = sourceDocument?.activeLayers?.[0] || sourceDocument?.layers?.[0];
+    if (!sourceLayer || typeof sourceLayer.duplicate !== "function") throw new Error("managed_source_layer_unavailable");
+    await sourceLayer.duplicate(sandboxDocument);
+  } finally {
+    await closeDocumentWithoutSaving(sourceDocument);
+  }
+  await activateDocument(sandboxDocument);
+  const importedLayer = sandboxDocument?.activeLayers?.[0] || null;
+  if (importedLayer) importedLayer.name = "StarBridge Imported Asset";
+  return Boolean(importedLayer);
+}
+
+async function applyProductionAdjustments(params) {
+  const canvas = params?.canvas || {};
+  const adjustment = params?.adjustment || {};
+  const descriptors = [];
+  if (canvas.resize === true) {
+    descriptors.push({
+      _obj: "canvasSize",
+      width: { _unit: "pixelsUnit", _value: Number(canvas.width) },
+      height: { _unit: "pixelsUnit", _value: Number(canvas.height) },
+      horizontal: { _enum: "horizontalLocation", _value: "horizontalCenter" },
+      vertical: { _enum: "verticalLocation", _value: "verticalCenter" },
+    });
+  }
+  const brightness = Number(adjustment.brightness || 0);
+  const contrast = Number(adjustment.contrast || 0);
+  if (brightness !== 0 || contrast !== 0) {
+    descriptors.push({
+      _obj: "make",
+      _target: [{ _ref: "adjustmentLayer" }],
+      using: {
+        _obj: "adjustmentLayer",
+        name: "StarBridge Brightness Contrast",
+        type: { _obj: "brightnessEvent", brightness, contrast, useLegacy: false },
+      },
+    });
+  }
+  const saturation = Number(adjustment.saturation || 0);
+  if (saturation !== 0) {
+    descriptors.push({
+      _obj: "make",
+      _target: [{ _ref: "adjustmentLayer" }],
+      using: {
+        _obj: "adjustmentLayer",
+        name: "StarBridge Saturation",
+        type: {
+          _obj: "hueSaturation",
+          presetKind: { _enum: "presetKindType", _value: "presetKindCustom" },
+          saturation,
+        },
+      },
+    });
+  }
+  if (descriptors.length) await action.batchPlay(descriptors, { synchronousExecution: true, modalBehavior: "execute" });
+  return descriptors.length;
+}
+
+async function exportSubjectCopy(document, absolutePath) {
+  await action.batchPlay([
+    { _obj: "autoCutout", sampleAllLayers: false },
+    { _obj: "copyToLayer" },
+  ], { synchronousExecution: true, modalBehavior: "execute" });
+  const subjectLayer = document?.activeLayers?.[0];
+  if (!subjectLayer) throw new Error("photoshop_subject_layer_unavailable");
+  subjectLayer.name = "StarBridge Subject";
+  const visibility = (document.layers || []).map((layer) => ({ layer, visible: Boolean(layer.visible) }));
+  try {
+    for (const item of visibility) item.layer.visible = item.layer === subjectLayer;
+    await saveProductionCopy(document, absolutePath, "subject");
+  } finally {
+    for (const item of visibility) item.layer.visible = item.visible;
+  }
+}
+
+async function productionExecuteConfirmed(params) {
+  const { sourcePath, stagingOutputs } = assertProductionParams(params);
+  const originalDocument = activeDocumentOrNull();
+  if (!originalDocument || typeof originalDocument.duplicate !== "function") {
+    return { ok: false, executed: false, message: "An active Photoshop document is required." };
+  }
+  return runModalJob(
+    "ps.production.execute_confirmed",
+    { commandName: "StarBridge Photoshop Production", historyTarget: "handler_document", timeoutSeconds: 45 },
+    async (executionContext, modalControl) => {
+      const hostControl = executionContext?.hostControl;
+      if (typeof hostControl?.registerAutoCloseDocument !== "function" || typeof hostControl?.unregisterAutoCloseDocument !== "function") {
+        throw new Error("photoshop_auto_close_control_required");
+      }
+      modalControl.checkpoint();
+      const sandboxDocument = await originalDocument.duplicate("StarBridge Sandbox Copy", false);
+      const sandboxId = sandboxDocument?.id ?? sandboxDocument?._id;
+      if (sandboxId === undefined || sandboxId === null) throw new Error("sandbox_document_id_unavailable");
+      await hostControl.registerAutoCloseDocument(sandboxId);
+      await modalControl.suspendHistory(sandboxId, "StarBridge Photoshop Production");
+      await activateDocument(sandboxDocument);
+      modalControl.checkpoint();
+      const imported = await importProjectLayer(sandboxDocument, sourcePath);
+      modalControl.checkpoint();
+      const adjustmentCount = await applyProductionAdjustments(params);
+      modalControl.checkpoint();
+      for (const [format, outputPath] of Object.entries(stagingOutputs)) {
+        if (format !== "subject") await saveProductionCopy(sandboxDocument, String(outputPath), format);
+      }
+      if (params?.export_subject === true) {
+        if (!stagingOutputs.subject) throw new Error("subject_output_path_required");
+        await exportSubjectCopy(sandboxDocument, String(stagingOutputs.subject));
+      }
+      const nativeReopen = stagingOutputs.psd
+        ? await validateNativePsdReopen(String(stagingOutputs.psd), sandboxDocument)
+        : { validated: false, skipped: true };
+      modalControl.checkpoint();
+      await hostControl.unregisterAutoCloseDocument(sandboxId);
+      return {
+        ok: true,
+        executed: true,
+        sandbox_copy: true,
+        source_overwritten: false,
+        imported_project_layer: imported,
+        adjustment_count: adjustmentCount,
+        output_formats: Object.keys(stagingOutputs),
+        native_reopen_validated: nativeReopen.validated === true,
+        native_reopen_skipped: nativeReopen.skipped === true,
+        rollback_supported: true,
+        photoshop_host: currentHost(),
+        warnings: [],
+      };
+    },
+  );
+}
+
 async function previewExport(params) {
   const document = activeDocumentOrNull();
   if (!document) {
@@ -360,7 +572,7 @@ async function previewExport(params) {
     return { ok: false, message: "output_path is required for real preview export." };
   }
   assertSandboxOutputPath(params);
-  return runModalJob("ps.preview.export", { commandName: "StarBridge Preview Export" }, async () => {
+  return runModalJob("ps.preview.export", { commandName: "KORYAO Preview Export" }, async () => {
     const fileEntry = await saveActiveDocumentAsPng(document, absolutePath);
     return {
       ok: true,
@@ -394,7 +606,7 @@ async function batchplayExecuteConfirmed(params) {
     descriptors,
     requireConfirmation: Boolean(params?.confirm_write),
     sandboxOnly: true,
-    commandName: "StarBridge Typed BatchPlay",
+    commandName: "KORYAO Typed BatchPlay",
   });
   const document = activeDocumentOrNull();
   return {
@@ -413,15 +625,66 @@ const handlers = {
   "ps.camera_raw.tune": cameraRawTune,
   "ps.batchplay.validate.local": batchplayValidate,
   "ps.batchplay.execute_confirmed": batchplayExecuteConfirmed,
+  "ps.production.execute_confirmed": productionExecuteConfirmed,
 };
 
-const client = new BridgeClient({ handlers });
+const panelElements = {
+  card: document.querySelector("#session-card"),
+  phase: document.querySelector("#session-phase"),
+  step: document.querySelector("#session-step"),
+  message: document.querySelector("#session-message"),
+  progress: document.querySelector("#session-progress"),
+  progressTrack: document.querySelector(".progress-track"),
+  mode: document.querySelector("#session-mode"),
+  time: document.querySelector("#session-time"),
+  connection: document.querySelector("#connection"),
+};
+
+const phaseLabels = {
+  queued: "已排队",
+  running: "Codex 正在工作",
+  completed: "已完成",
+  failed: "执行失败",
+  cancelled: "已取消",
+  needs_user: "等待确认",
+};
+
+function setPanelText(element, value) {
+  if (element) element.textContent = value;
+}
+
+function onBridgeStatus(status) {
+  const labels = { connecting: "连接中", connected: "已连接", disconnected: "已断开", error: "连接异常" };
+  setPanelText(panelElements.connection, labels[status] || status);
+}
+
+function onLiveSession(update) {
+  const progress = Math.max(0, Math.min(100, Number(update?.progress || 0)));
+  if (panelElements.card) panelElements.card.dataset.phase = String(update?.phase || "idle");
+  setPanelText(panelElements.phase, phaseLabels[update?.phase] || String(update?.phase || "等待任务"));
+  setPanelText(panelElements.step, `${update?.step?.index || 0}/${update?.step?.total || 0} · ${update?.step?.label || ""}`);
+  setPanelText(panelElements.message, String(update?.message || ""));
+  setPanelText(panelElements.mode, update?.mode === "computer_use" ? "界面操作" : "结构化命令");
+  setPanelText(panelElements.time, update?.at ? new Date(update.at).toLocaleTimeString() : "—");
+  if (panelElements.progress) panelElements.progress.style.width = `${progress}%`;
+  if (panelElements.progressTrack) panelElements.progressTrack.setAttribute("aria-valuenow", String(progress));
+}
+
+const client = new BridgeClient({ handlers, onStatus: onBridgeStatus, onSession: onLiveSession });
+document.querySelector("#reconnect")?.addEventListener("click", () => client.reconnect());
 client.connect();
 
-if (typeof entrypoints !== "undefined") {
+if (entrypoints) {
   entrypoints.setup({
     commands: {
       starbridgePing: async () => ping(),
+    },
+    panels: {
+      starbridgePhotoshopLivePanel: {
+        show() {
+          onBridgeStatus(client.connected ? "connected" : "connecting");
+        },
+      },
     },
   });
 }

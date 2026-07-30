@@ -68,11 +68,11 @@ if ($Bootstrap) {
     $pythonForInstall = if (Test-Path -LiteralPath $venvPython) { $venvPython } else { "python" }
     $bootstrapResults += Invoke-Step "upgrade pip" $pythonForInstall @("-m", "pip", "install", "--upgrade", "pip")
     $bootstrapResults += Invoke-Step "install dev dependencies" $pythonForInstall @("-m", "pip", "install", "-r", "requirements-dev.txt")
-    $bootstrapResults += Invoke-Step "install package editable" $pythonForInstall @("-m", "pip", "install", "-e", ".")
+    $bootstrapResults += Invoke-Step "install package editable" $pythonForInstall @("-m", "pip", "install", "-e", ".[vector60]")
 }
 
 $checks = [ordered]@{
-    repo = "StarBridge"
+    repo = "KORYAO"
     mode = $(if ($Bootstrap) { "bootstrap" } else { "check" })
     dry_run = [bool]$DryRun
     venv = [ordered]@{
@@ -99,6 +99,7 @@ $checks = [ordered]@{
         Test-EnvPath "BLENDER_EXE"
         Test-EnvPath "BLENDER_MCP_DIR"
         Test-EnvPath "AUTOCAD_EXE"
+        Test-EnvPath "DRAWIO_EXE"
         Test-EnvPath "PHOTOSHOP_EXE"
         Test-EnvPath "ILLUSTRATOR_EXE"
         Test-EnvPath "JIANYING_EXE"
@@ -118,7 +119,7 @@ if ($Json) {
     exit 0
 }
 
-Write-Host "StarBridge Windows local setup check"
+Write-Host "KORYAO Windows local setup check"
 Write-Host "Repository: $repoRoot"
 Write-Host "Mode: $($checks.mode)"
 Write-Host "Virtual environment: exists=$($checks.venv.exists), python=$($checks.venv.python)"

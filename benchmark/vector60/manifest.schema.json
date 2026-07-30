@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://koryao.local/schemas/vector60-manifest-v1.json",
+  "title": "KORYAO Vector60 explicit local benchmark manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "vector60-manifest-v1"
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 40,
+      "maxItems": 40,
+      "items": {
+        "$ref": "#/$defs/case"
+      },
+      "allOf": [
+        {
+          "contains": {
+            "properties": {
+              "category": {
+                "const": "logo_or_icon"
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "minContains": 10,
+          "maxContains": 10
+        },
+        {
+          "contains": {
+            "properties": {
+              "category": {
+                "const": "lineart"
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "minContains": 10,
+          "maxContains": 10
+        },
+        {
+          "contains": {
+            "properties": {
+              "category": {
+                "const": "flat"
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "minContains": 10,
+          "maxContains": 10
+        },
+        {
+          "contains": {
+            "properties": {
+              "category": {
+                "const": "illustration"
+              }
+            },
+            "required": [
+              "category"
+            ]
+          },
+          "minContains": 10,
+          "maxContains": 10
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "category",
+        "input"
+      ],
+      "properties": {
+        "case_id": {
+          "type": "string",
+          "pattern": "^(logo_or_icon|lineart|flat|illustration)-(0[1-9]|10)$"
+        },
+        "category": {
+          "enum": [
+            "logo_or_icon",
+            "lineart",
+            "flat",
+            "illustration"
+          ]
+        },
+        "input": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "logo_or_icon"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "case_id": {
+                "pattern": "^logo_or_icon-(0[1-9]|10)$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "lineart"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "case_id": {
+                "pattern": "^lineart-(0[1-9]|10)$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "flat"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "case_id": {
+                "pattern": "^flat-(0[1-9]|10)$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "category": {
+                "const": "illustration"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "case_id": {
+                "pattern": "^illustration-(0[1-9]|10)$"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

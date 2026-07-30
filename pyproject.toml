@@ -1,19 +1,19 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "starbridge-creative-software-mcp"
-version = "0.1.0a0"
+version = "0.1.0a2"
 description = "Windows-first, local-first MCP stdio server and safety bridge for connecting AI agents (Codex, Cursor, Claude) to creative desktop software."
 readme = "README.md"
-license = { text = "MIT" }
-authors = [{ name = "StarBridge contributors" }]
-keywords = ["mcp", "model-context-protocol", "codex", "comfyui", "autocad", "dxf", "photoshop", "illustrator", "blender", "ai-agent", "local-first", "safety"]
+license = "LicenseRef-KORYAO-Proprietary"
+license-files = ["LICENSE"]
+authors = [{ name = "菅宝瑞" }]
+keywords = ["mcp", "model-context-protocol", "codex", "comfyui", "autocad", "dxf", "drawio", "diagram", "photoshop", "illustrator", "blender", "ai-agent", "local-first", "safety"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Operating System :: Microsoft :: Windows",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -23,17 +23,22 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Application Frameworks",
   "Topic :: Multimedia :: Graphics",
 ]
-dependencies = []
+dependencies = [
+  "jsonschema>=4.23,<5",
+  "tomli>=2; python_version < '3.11'",
+]
 
 [project.urls]
-Homepage = "https://github.com/jianbaorui07-dot/Codex-Integration-with-Creative-Industry-Software"
-Repository = "https://github.com/jianbaorui07-dot/Codex-Integration-with-Creative-Industry-Software"
-Issues = "https://github.com/jianbaorui07-dot/Codex-Integration-with-Creative-Industry-Software/issues"
-Documentation = "https://github.com/jianbaorui07-dot/Codex-Integration-with-Creative-Industry-Software/tree/main/docs"
+Homepage = "https://github.com/jianbaorui07-dot/KORYAO-basic"
+Repository = "https://github.com/jianbaorui07-dot/KORYAO-basic"
+Issues = "https://github.com/jianbaorui07-dot/KORYAO-basic/issues"
+Documentation = "https://github.com/jianbaorui07-dot/KORYAO-basic/tree/main/docs"
 
 [project.optional-dependencies]
 dev = [
   "Pillow>=10,<13",
+  "numpy>=2,<3",
+  "opencv-python-headless>=4.10,<6",
   "pytest>=8",
   "ruff>=0.4.0",
   "mypy>=1.10",
@@ -51,14 +56,64 @@ adobe = [
   "Pillow>=10,<13",
   "pywin32>=306; platform_system == 'Windows'",
 ]
+image-to-psd = [
+  "Pillow>=10,<13",
+  "numpy>=2,<3",
+  "opencv-python-headless>=4.10,<6",
+  "pywin32>=306; platform_system == 'Windows'",
+]
+illustrator-trace = [
+  "numpy>=2,<3",
+  "opencv-python-headless>=4.10,<6",
+  "Pillow>=10,<13",
+]
+illustrator-vector = [
+  "Pillow>=10,<13",
+]
+vectorization = [
+  "numpy>=2,<3",
+  "opencv-python-headless>=4.10,<6",
+  "Pillow>=10,<13",
+]
+vector60 = [
+  "numpy>=2,<3",
+  "opencv-python-headless>=4.10,<6",
+  "Pillow>=10,<13",
+  "vtracer==0.6.15",
+  "skia-pathops==0.9.2",
+  "svgpathtools==1.7.2",
+]
+vector-refinement = [
+  "numpy>=2,<3",
+  "opencv-python-headless>=4.10,<6",
+  "Pillow>=10,<13",
+  "vtracer>=0.6.11,<0.7",
+]
+vector-app = [
+  "numpy>=2,<3",
+  "opencv-python-headless>=4.10,<6",
+  "Pillow>=10,<13",
+  "PySide6>=6.8,<7",
+]
 
 [project.scripts]
 starbridge = "starbridge_mcp.server:main"
 starbridge-mcp = "starbridge_mcp.mcp_server:main"
 starbridge-backend = "starbridge_mcp.backend:main"
+starbridge-vectorize = "starbridge_mcp.vectorization.cli:main"
+starbridge-artisan-brief = "starbridge_mcp.vectorization.artisan_brief:main"
+starbridge-artisan-refine = "starbridge_mcp.vectorization.artisan_refine:main"
+starbridge-artisan-paint = "starbridge_mcp.vectorization.artisan_paint:main"
+starbridge-artisan-direction = "starbridge_mcp.vectorization.artisan_direction:main"
+starbridge-artisan-illustrator = "starbridge_mcp.vectorization.artisan_illustrator:main"
+vectorflow-studio = "starbridge_mcp.vectorization.app:main"
+starbridge-image-to-psd = "starbridge_mcp.adapters.photoshop.semantic_layers.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["starbridge_mcp*"]
+include = ["starbridge_mcp*", "model_contracts*"]
+
+[tool.setuptools.package-data]
+model_contracts = ["schemas/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

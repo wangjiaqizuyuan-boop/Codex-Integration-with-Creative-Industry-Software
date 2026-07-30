@@ -1,1 +1,1 @@
-"""StarBridge bridge prototypes."""
+"""KORYAO bridge prototypes."""

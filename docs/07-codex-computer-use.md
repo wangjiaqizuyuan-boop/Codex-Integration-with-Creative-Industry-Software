@@ -1,6 +1,6 @@
 # Codex Computer Use on Windows
 
-这份文档说明 Codex Computer Use 在本仓库里的定位。它是 GUI 通道，负责看见和操作 Windows 桌面软件；StarBridge MCP 是结构化工具通道，负责把稳定动作做成可复现、可测试、可脱敏的工具。
+这份文档说明 Codex Computer Use 在本仓库里的定位。它是 GUI 通道，负责看见和操作 Windows 桌面软件；KORYAO MCP 是结构化工具通道，负责把稳定动作做成可复现、可测试、可脱敏的工具。
 
 ## 适合 Computer Use 的任务
 
@@ -10,9 +10,9 @@
 - 截图留证，配合脱敏报告说明“窗口里发生了什么”。
 - 在 MCP 工具失败时，观察软件是否弹出授权、插件、文件锁定、崩溃或兼容性提示。
 
-Computer Use 不适合作为生产批处理的唯一执行方式。凡是需要长期稳定、可测试、可重复、可 CI 验证的动作，都应该沉淀到 StarBridge MCP tools、CLI 或参数化脚本里。
+Computer Use 不适合作为生产批处理的唯一执行方式。凡是需要长期稳定、可测试、可重复、可 CI 验证的动作，都应该沉淀到 KORYAO MCP tools、CLI 或参数化脚本里。
 
-## 仍应使用 StarBridge MCP 的任务
+## 仍应使用 KORYAO MCP 的任务
 
 - 读取桥状态、工具能力和环境摘要。
 - 校验 ComfyUI workflow、CAD plan、DXF 输出计划等结构化输入。
@@ -23,7 +23,7 @@ Computer Use 不适合作为生产批处理的唯一执行方式。凡是需要�
 
 ## 双通道工作流
 
-| 软件 | Computer Use GUI 通道 | StarBridge MCP / structured tools 通道 | 推荐分工 |
+| 软件 | Computer Use GUI 通道 | KORYAO MCP / structured tools 通道 | 推荐分工 |
 | --- | --- | --- | --- |
 | Photoshop | 查看文档、图层面板、菜单状态；复现主体选择、导出面板或插件异常 | `photoshop.session_info`、参数化文档信息、受保护导出脚本 | GUI 负责观察和复现，MCP 负责只读摘要和可确认写入 |
 | Illustrator | 查看画板、链接资源、Image Trace 面板、导出对话框 | `illustrator.document_info`、后续白名单 JSX、导出 preflight | GUI 负责确认 UI 行为，MCP 负责参数化读取和导出 |
