@@ -7,6 +7,30 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Get-SafePythonFailureKind {
+    param([AllowEmptyString()][string]$StandardError)
+
+    $missingModule = [regex]::Match(
+        $StandardError,
+        "ModuleNotFoundError: No module named '([A-Za-z0-9_.-]+)'"
+    )
+    if ($missingModule.Success) {
+        return "missing packaged Python module '$($missingModule.Groups[1].Value)'"
+    }
+    $exceptionType = [regex]::Match(
+        $StandardError,
+        "(?m)^([A-Za-z][A-Za-z0-9_]*(?:Error|Exception)):"
+    )
+    if ($exceptionType.Success) {
+        return "packaged Python $($exceptionType.Groups[1].Value)"
+    }
+    if ($StandardError -match "Traceback") {
+        return "packaged Python startup error"
+    }
+    return "startup error"
+}
+
 if ([string]::IsNullOrWhiteSpace($TargetTriple)) {
     $architecture = if ($env:PROCESSOR_ARCHITEW6432) {
         $env:PROCESSOR_ARCHITEW6432
@@ -89,15 +113,7 @@ try {
             $process.WaitForExit(5000) | Out-Null
         }
         $startupError = $process.StandardError.ReadToEnd()
-        $failureKind = if ($startupError -match "ModuleNotFoundError") {
-            "missing packaged Python module"
-        }
-        elseif ($startupError -match "Traceback") {
-            "packaged Python startup error"
-        }
-        else {
-            "startup error"
-        }
+        $failureKind = Get-SafePythonFailureKind -StandardError $startupError
         $exitCode = if ($process.HasExited) { $process.ExitCode } else { "unknown" }
         throw "The sidecar exited before reporting ready ($failureKind; exit code $exitCode)."
     }
@@ -261,6 +277,11 @@ command = "other-tool"
     if (-not $mcpProcess.WaitForExit(10000)) {
         $mcpProcess.Kill()
         throw "The packaged MCP connector did not exit after input closed."
+    }
+    if ([string]::IsNullOrWhiteSpace($pairResponseLine)) {
+        $mcpStartupError = $mcpProcess.StandardError.ReadToEnd()
+        $mcpFailureKind = Get-SafePythonFailureKind -StandardError $mcpStartupError
+        throw "The packaged MCP connector exited before responding ($mcpFailureKind; exit code $($mcpProcess.ExitCode))."
     }
     $pairResponse = $pairResponseLine | ConvertFrom-Json
     if (-not $pairResponse.result.structuredContent.ok) {

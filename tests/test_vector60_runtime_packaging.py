@@ -84,7 +84,10 @@ class Vector60RuntimePackagingTest(unittest.TestCase):
         self.assertIn("vector60_node_runtime_included = $false", sidecar_test)
         self.assertIn("vector60_svgo_runtime_included = $false", sidecar_test)
         self.assertIn("missing packaged Python module", sidecar_test)
+        self.assertIn("Get-SafePythonFailureKind", sidecar_test)
+        self.assertIn("MCP connector exited before responding", sidecar_test)
         self.assertNotIn("throw $startupError", sidecar_test)
+        self.assertNotIn("throw $mcpStartupError", sidecar_test)
         self.assertNotRegex(build.lower(), r"\bnpx\b")
 
     def test_ci_runs_real_cross_platform_runtime_smoke(self) -> None:
