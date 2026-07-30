@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import re
 import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
@@ -480,6 +481,7 @@ class AutocadDxfBridge(BaseBridge):
             raise ValueError("generated SVG preview has an invalid root element")
 
         path_count = 0
+        background_count = 0
         for element in root.iter():
             local_name = element.tag.rsplit("}", 1)[-1].lower()
             if local_name in {"a", "iframe", "object", "embed", "use", "video", "audio"}:
@@ -498,12 +500,24 @@ class AutocadDxfBridge(BaseBridge):
                 if not (element.get("d") or "").strip():
                     raise ValueError("generated SVG preview contains an empty path")
                 path_count += 1
+            elif local_name == "rect":
+                if (element.get("fill") or "").lower() != "#ffffff":
+                    raise ValueError("generated SVG preview does not use a white background")
+                background_count += 1
         if path_count == 0:
             raise ValueError("generated SVG preview contains no vector paths")
+        if background_count != 1:
+            raise ValueError("generated SVG preview must contain one white background")
+        colors = {color.lower() for color in re.findall(r"#[0-9a-fA-F]{6}", text)}
+        if colors != {"#000000", "#ffffff"}:
+            raise ValueError("generated SVG preview does not use the black-on-white palette")
 
         return {
             "verified": True,
             "path_count": path_count,
+            "background_color": "#ffffff",
+            "foreground_color": "#000000",
+            "color_policy": "black_on_white",
             "embedded_raster_count": 0,
             "external_reference_count": 0,
             "size_bytes": len(payload),
@@ -516,7 +530,7 @@ class AutocadDxfBridge(BaseBridge):
         staging_path: Path,
     ) -> dict[str, Any]:
         import ezdxf
-        from ezdxf.addons.drawing import Frontend, RenderContext, layout, svg
+        from ezdxf.addons.drawing import Frontend, RenderContext, config, layout, svg
 
         readback = ezdxf.readfile(dxf_path)
         auditor = readback.audit()
@@ -524,7 +538,15 @@ class AutocadDxfBridge(BaseBridge):
             raise ValueError("cannot preview a DXF that failed readback audit")
 
         backend = svg.SVGBackend()
-        Frontend(RenderContext(readback), backend).draw_layout(readback.modelspace())
+        preview_config = config.Configuration(
+            background_policy=config.BackgroundPolicy.WHITE,
+            color_policy=config.ColorPolicy.BLACK,
+        )
+        Frontend(
+            RenderContext(readback),
+            backend,
+            config=preview_config,
+        ).draw_layout(readback.modelspace())
         staging_path.write_text(
             backend.get_string(layout.Page(0, 0)),
             encoding="utf-8",

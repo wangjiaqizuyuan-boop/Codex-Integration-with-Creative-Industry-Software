@@ -226,6 +226,18 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             self.assertTrue(manifest["preview_verification"]["verified"])
             self.assertGreater(manifest["preview_verification"]["path_count"], 0)
             self.assertEqual(
+                "#ffffff",
+                manifest["preview_verification"]["background_color"],
+            )
+            self.assertEqual(
+                "#000000",
+                manifest["preview_verification"]["foreground_color"],
+            )
+            self.assertEqual(
+                "black_on_white",
+                manifest["preview_verification"]["color_policy"],
+            )
+            self.assertEqual(
                 0,
                 manifest["preview_verification"]["external_reference_count"],
             )
@@ -357,6 +369,22 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             self.assertFalse(output.with_suffix(".preview.svg").exists())
             self.assertFalse(output.with_suffix(".manifest.json").exists())
             self.assertEqual([], list(Path(tmp).glob(".*.staging")))
+
+    def test_svg_preview_verifier_rejects_dark_background(self) -> None:
+        bridge = autocad_dxf._bridge_instance
+        with tempfile.TemporaryDirectory() as tmp:
+            preview = Path(tmp) / "dark.svg"
+            preview.write_text(
+                (
+                    '<svg xmlns="http://www.w3.org/2000/svg">'
+                    '<rect fill="#212830" width="10" height="10"/>'
+                    '<path d="M 0 0 L 10 10" stroke="#ffffff"/>'
+                    "</svg>"
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "white background"):
+                bridge._verify_svg_preview(preview)
 
 
 if __name__ == "__main__":

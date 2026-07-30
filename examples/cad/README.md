@@ -8,7 +8,7 @@
 - 调用 `validate_cad_plan` 验证结构。
 - 调用 `summarize_plan` 统计图层和实体数量。
 - 默认调用 `write_dxf(..., dry_run=True)`，不会写 DXF 文件。
-- 明确确认真实写入后，先比较批准 plan 与回读 DXF 的单位、图层、几何和文字内容指纹，再同批次生成 DXF、无头 SVG 预览和产物清单。
+- 明确确认真实写入后，先比较批准 plan 与回读 DXF 的单位、图层、几何和文字内容指纹，再同批次生成 DXF、白底黑线 SVG 预览和产物清单。
 
 ## 是否需要 AutoCAD
 
