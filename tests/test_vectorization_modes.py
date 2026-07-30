@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -314,6 +315,78 @@ class VectorizationModeTests(unittest.TestCase):
 
 @unittest.skipUnless(HAS_DESIGN_RUNTIME, "smart-vector optional dependencies not installed")
 class DesignVectorizationModeTests(VectorizationModeTests):
+    DEFAULT_OUTPUT_GOLDENS = {
+        "smart": {
+            "sha256": "42e30c44f826279f8d1504bbcf74a40b860fb6cdc4a9c053595f0e94d47ff408",
+            "verifier": {
+                "color_count": 13,
+                "subpath_count": 13,
+                "anchor_point_count": 57,
+                "bytes": 1383,
+            },
+            "report": {
+                "color_count": 13,
+                "subpaths": 13,
+                "points": 57,
+                "svg_bytes": 1383,
+            },
+            "parameters": {
+                "colors": 24,
+                "max_dimension": 1600,
+                "simplify_ratio": 0.004,
+                "min_region_area": 8,
+                "alpha_threshold": 8,
+            },
+        },
+        "lightweight": {
+            "sha256": "749e07b2701f74c782d1e379b1c5069fb5ada88f19ac5cb894d8b8635df287bd",
+            "verifier": {
+                "color_count": 8,
+                "subpath_count": 10,
+                "anchor_point_count": 48,
+                "bytes": 1063,
+            },
+            "report": {
+                "color_count": 8,
+                "subpaths": 10,
+                "points": 48,
+                "svg_bytes": 1063,
+            },
+            "parameters": {
+                "colors": 8,
+                "max_dimension": 1024,
+                "simplify_ratio": 0.012,
+                "min_region_area": 32,
+                "alpha_threshold": 24,
+            },
+        },
+    }
+
+    def make_default_golden_source(self) -> Path:
+        source = self.root / "generated-default-golden.png"
+        image = Image.new("RGBA", (48, 36), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        colors = (
+            (230, 30, 40, 255),
+            (30, 180, 70, 255),
+            (30, 90, 220, 255),
+            (245, 200, 30, 255),
+            (210, 45, 190, 255),
+            (25, 190, 200, 255),
+            (240, 115, 25, 255),
+            (115, 55, 190, 255),
+            (30, 130, 125, 255),
+            (135, 75, 35, 255),
+            (105, 110, 120, 255),
+            (235, 120, 150, 128),
+        )
+        for index, color in enumerate(colors):
+            left = (index % 4) * 12
+            top = (index // 4) * 12
+            draw.rectangle((left, top, left + 11, top + 11), fill=color)
+        image.save(source)
+        return source
+
     def make_design_source(self) -> Path:
         source = self.root / "private-design-source.png"
         image = Image.new("RGBA", (160, 120), (0, 0, 0, 0))
@@ -368,6 +441,72 @@ class DesignVectorizationModeTests(VectorizationModeTests):
             self.assertTrue((output / "preview.png").is_file())
             self.assertTrue((output / "parameters.json").is_file())
             self.assertTrue((output / "vector_report.md").is_file())
+
+    def test_smart_and_lightweight_default_svg_goldens_do_not_change(self) -> None:
+        source = self.make_default_golden_source()
+        source_bytes = source.read_bytes()
+        source_mtime_ns = source.stat().st_mtime_ns
+
+        for mode, expected in self.DEFAULT_OUTPUT_GOLDENS.items():
+            output_blobs: list[bytes] = []
+            for run_number in (1, 2):
+                reference_id = f"{mode}-golden-{run_number}"
+                result = run_vectorization(
+                    RunConfig(input_path=str(source), mode=mode, reference_id=reference_id)
+                )
+                output = self.output_root / reference_id / mode
+                svg_path = output / "vector.svg"
+                svg_bytes = svg_path.read_bytes()
+                svg_text = svg_bytes.decode("utf-8").lower()
+                report = json.loads((output / "vector_report.json").read_text(encoding="utf-8"))
+                evidence = verify_svg_artifact(
+                    svg_path,
+                    expected_width=48,
+                    expected_height=36,
+                )
+
+                with self.subTest(mode=mode, run=run_number):
+                    self.assertTrue(result["ok"])
+                    self.assertEqual(report["mode"]["key"], mode)
+                    self.assertEqual(
+                        hashlib.sha256(svg_bytes).hexdigest(),
+                        expected["sha256"],
+                    )
+                    self.assertEqual(
+                        {
+                            key: evidence[key]
+                            for key in (
+                                "color_count",
+                                "subpath_count",
+                                "anchor_point_count",
+                                "bytes",
+                            )
+                        },
+                        expected["verifier"],
+                    )
+                    self.assertEqual(
+                        {key: report["vector"][key] for key in expected["report"]},
+                        expected["report"],
+                    )
+                    self.assertEqual(
+                        {key: report["parameters"][key] for key in expected["parameters"]},
+                        expected["parameters"],
+                    )
+                    self.assertEqual(evidence["embedded_raster_count"], 0)
+                    self.assertEqual(evidence["external_reference_count"], 0)
+                    self.assertNotIn("<image", svg_text)
+                    self.assertNotIn("data:image", svg_text)
+                    self.assertNotIn("<script", svg_text)
+                    self.assertNotIn("javascript:", svg_text)
+                    self.assertNotIn("xlink:href=", svg_text)
+                    self.assertNotIn(" href=", svg_text)
+                output_blobs.append(svg_bytes)
+
+            with self.subTest(mode=mode, comparison="byte-equal"):
+                self.assertEqual(output_blobs[0], output_blobs[1])
+
+        self.assertEqual(source.read_bytes(), source_bytes)
+        self.assertEqual(source.stat().st_mtime_ns, source_mtime_ns)
 
     def test_path_limit_stops_before_target_artifacts_are_published(self) -> None:
         source = self.make_design_source()
