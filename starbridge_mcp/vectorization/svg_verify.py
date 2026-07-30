@@ -32,6 +32,7 @@ _ALLOWED_ATTRIBUTES = {
 }
 _HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}\Z")
 _STRUCTURE_ID = re.compile(r"[a-z][a-z0-9-]{0,63}\Z")
+_PAINT_OBJECT_ID = re.compile(r"paint-[0-9a-f]{8}\Z")
 _ARTISAN_ROLES = ("foundation", "subject", "detail", "accent")
 _NUMBER = r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?"
 _PATH_LEXEME = re.compile(rf"\s*([MLCZ]|{_NUMBER})", re.IGNORECASE)
@@ -325,6 +326,7 @@ def verify_svg_artifact(
     stroke_subpath_count = 0
     shape_depths: dict[str, int] = {}
     shape_parents: dict[str, str | None] = {}
+    paint_object_ids: set[str] = set()
     semantic_role_counts = dict.fromkeys(_ARTISAN_ROLES, 0)
     for element in root.iter():
         element_namespace, local_name = _tag_parts(element.tag)
@@ -417,8 +419,8 @@ def verify_svg_artifact(
                 )
             metrics = _path_metrics(path_data, require_closed=True)
             color = fill
+        path_id = element.get("id")
         structure_values = (
-            element.get("id"),
             element.get("data-role"),
             element.get("data-depth"),
             element.get("data-parent"),
@@ -432,14 +434,13 @@ def verify_svg_artifact(
                 "invalid_designer_name", "Artisan designer names must use safe readable text."
             )
         if any(value is not None for value in structure_values):
-            if any(value is None for value in structure_values):
+            if path_id is None or any(value is None for value in structure_values):
                 raise SvgArtifactError(
                     "invalid_structure_metadata",
                     "Structured paths must provide id, role, depth, and parent metadata.",
                 )
-            shape_id, role, raw_depth, raw_parent = (
-                str(value).strip() for value in structure_values
-            )
+            shape_id = path_id.strip()
+            role, raw_depth, raw_parent = (str(value).strip() for value in structure_values)
             if not _STRUCTURE_ID.fullmatch(shape_id) or shape_id in shape_depths:
                 raise SvgArtifactError(
                     "invalid_structure_id", "Artisan shape ids must be unique safe identifiers."
@@ -465,6 +466,21 @@ def verify_svg_artifact(
             raise SvgArtifactError(
                 "invalid_structure_metadata", "Every structured path must expose shape metadata."
             )
+        elif path_id is not None:
+            paint_object_id = path_id.strip()
+            alpha = round(opacity * 255)
+            expected_paint_object_id = f"paint-{color[1:].lower()}{alpha:02x}"
+            if (
+                not _PAINT_OBJECT_ID.fullmatch(paint_object_id)
+                or paint_object_id != expected_paint_object_id
+                or paint_object_id in paint_object_ids
+                or not math.isclose(opacity, alpha / 255, abs_tol=1e-12)
+            ):
+                raise SvgArtifactError(
+                    "invalid_paint_object_id",
+                    "Paint object ids must uniquely match their exact 8-bit RGBA paint.",
+                )
+            paint_object_ids.add(paint_object_id)
         if any(x < 0 or x > width or y < 0 or y > height for x, y in metrics["coordinates"]):
             raise SvgArtifactError(
                 "path_outside_canvas", "SVG path coordinates must stay inside the canvas."
@@ -518,6 +534,7 @@ def verify_svg_artifact(
         "stroke_subpath_count": stroke_subpath_count,
         "color_count": len(fills),
         "paint_count": len(paints),
+        "addressable_path_count": len(paint_object_ids),
         "layer_count": len(group_roles),
         "structured_path_count": len(shape_depths),
         "nested_path_count": sum(parent is not None for parent in shape_parents.values()),

@@ -101,6 +101,10 @@ def opacity_value(alpha: int) -> str:
     return format(alpha / 255, ".15g")
 
 
+def paint_object_id(color: tuple[int, int, int, int]) -> str:
+    return "paint-" + "".join(f"{channel:02x}" for channel in color)
+
+
 def build_paths(
     image: Image.Image,
     max_subpaths: int,
@@ -139,11 +143,12 @@ def write_svg(
             f'height="{height}" viewBox="0 0 {width} {height}">\n'
         )
         for red, green, blue, alpha in sorted(paths):
+            color = (red, green, blue, alpha)
             fill = f"#{red:02x}{green:02x}{blue:02x}"
             opacity = "" if alpha == 255 else f' fill-opacity="{opacity_value(alpha)}"'
             stream.write(
-                f'<path fill="{fill}"{opacity} fill-rule="evenodd" stroke="none" '
-                f'd="{" ".join(paths[(red, green, blue, alpha)])}"/>\n'
+                f'<path id="{paint_object_id(color)}" fill="{fill}"{opacity} '
+                f'fill-rule="evenodd" stroke="none" d="{" ".join(paths[color])}"/>\n'
             )
         stream.write("</svg>\n")
 
@@ -191,6 +196,11 @@ def run_exact_vector(args: argparse.Namespace) -> dict[str, Any]:
             )
         except SvgArtifactError as exc:
             raise ExactVectorError(exc.code, str(exc)) from exc
+        if evidence["addressable_path_count"] != evidence["path_count"]:
+            raise ExactVectorError(
+                "paint_identity_mismatch",
+                "Every exact RGBA paint path must expose one verified stable object id.",
+            )
 
         report = {
             "ok": True,
@@ -204,6 +214,8 @@ def run_exact_vector(args: argparse.Namespace) -> dict[str, Any]:
                 "rectangle_subpaths": run_count,
                 "rgb_color_count": evidence["color_count"],
                 "rgba_paint_count": evidence["paint_count"],
+                "addressable_paint_objects": evidence["addressable_path_count"],
+                "paint_object_id_scheme": "paint-{rrggbbaa}",
                 "covered_pixel_count": source["pixel_count"],
             },
             "artifact": {

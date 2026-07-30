@@ -8,9 +8,10 @@
 2. 应用 EXIF 方向并转换为 RGBA 像素网格，不缩放、不模糊、不量化颜色。
 3. 从左到右扫描每一行，把连续的相同 RGBA 像素合并成一个矩形子路径。
 4. 按 RGBA paint 把矩形合并到少量复合 SVG `<path>` 对象中。
-5. 用 fail-closed verifier 检查尺寸、路径、颜色、透明度、字节数和 SHA-256，并拒绝 `<image>`、脚本、外链和越界坐标。
-6. 在 Illustrator 中打开已验证 SVG，使用“存储为 Adobe Illustrator (`.ai`)”；不执行“图像描摹”。
-7. 大型文件写入期间检查 Illustrator 进程仍在响应；完成后复核桌面 `.ai` 文件存在、大小非零，并保持文档可见。
+5. 为每个 paint 对象写入由精确 RGBA 值导出的稳定 ID（如 `paint-ff0000ff`），让 Illustrator 和后续脚本能按 paint 精确寻址。
+6. 用 fail-closed verifier 检查尺寸、路径、颜色、透明度、paint ID、字节数和 SHA-256，并拒绝 `<image>`、脚本、外链和越界坐标。
+7. 在 Illustrator 中打开已验证 SVG，使用“存储为 Adobe Illustrator (`.ai`)”；不执行“图像描摹”。
+8. 大型文件写入期间检查 Illustrator 进程仍在响应；完成后复核桌面 `.ai` 文件存在、大小非零，并保持文档可见。
 
 ```mermaid
 flowchart LR
@@ -38,7 +39,7 @@ examples/output/illustrator/exact-pixel/<reference-id>/
   exact_pixel_vector.report.json
 ```
 
-SVG 与 report 会先在同一文件系统的隐藏 staging 目录中完成生成和校验，再把整个目录一次性交付。目标批次已存在时返回 `output_batch_exists`，不会覆盖旧 SVG 或 report；发布失败时清理本轮 staging，若清理也失败则返回 `output_rollback_failed`。因此只有完整的双产物批次会出现在最终目录。
+SVG 与 report 会先在同一文件系统的隐藏 staging 目录中完成生成和校验，再把整个目录一次性交付。每个复合 path 的 ID 使用 `paint-{rrggbbaa}`，由 paint 本身决定而不依赖路径顺序；verifier 会拒绝与 fill / fill-opacity 不一致、重复或非安全格式的 ID。目标批次已存在时返回 `output_batch_exists`，不会覆盖旧 SVG 或 report；发布失败时清理本轮 staging，若清理也失败则返回 `output_rollback_failed`。因此只有完整、可逐 paint 寻址的双产物批次会出现在最终目录。
 
 桌面 `.ai` 交付只在用户明确要求时执行。源图、SVG、AI 和 report 都不能提交到 GitHub。
 

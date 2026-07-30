@@ -96,7 +96,18 @@ class ExactPixelVectorTests(unittest.TestCase):
         self.assertEqual(result["vector"]["covered_pixel_count"], 12)
         self.assertEqual(result["vector"]["rectangle_subpaths"], 6)
         self.assertEqual(result["vector"]["path_objects"], 4)
+        self.assertEqual(result["vector"]["addressable_paint_objects"], 4)
+        self.assertEqual(result["vector"]["paint_object_id_scheme"], "paint-{rrggbbaa}")
         self.assertEqual(len(paths), 4)
+        self.assertEqual(
+            [path.get("id") for path in paths],
+            [
+                "paint-0000ff80",
+                "paint-00ff0000",
+                "paint-ff0000ff",
+                "paint-ffffffff",
+            ],
+        )
         self.assertIn('fill-opacity="0.501960784313725"', svg_text)
         self.assertIn('fill-opacity="0"', svg_text)
         self.assertNotIn("<image", svg_text)
@@ -123,6 +134,23 @@ class ExactPixelVectorTests(unittest.TestCase):
         self.assertNotIn(source.name, serialized)
         self.assertNotIn(str(source.parent), serialized)
         self.assertFalse(Path(first["artifact"]["path"]).is_absolute())
+
+    def test_verifier_rejects_paint_ids_that_do_not_match_rgba(self) -> None:
+        source = self.make_source()
+        exact.run_exact_vector(self.args(source))
+        svg_path = self.sandbox / "case" / "exact_pixel_vector.svg"
+        svg_text = svg_path.read_text(encoding="utf-8")
+
+        for replacement in ("paint-0000ff81", "customer-private-name"):
+            with self.subTest(replacement=replacement):
+                tampered = self.root / f"{replacement}.svg"
+                tampered.write_text(
+                    svg_text.replace("paint-0000ff80", replacement),
+                    encoding="utf-8",
+                )
+                with self.assertRaises(exact.SvgArtifactError) as raised:
+                    exact.verify_svg_artifact(tampered)
+                self.assertEqual("invalid_paint_object_id", raised.exception.code)
 
     def test_rejects_outside_outputs_and_over_complex_images_without_partial_files(self) -> None:
         source = self.make_source()
