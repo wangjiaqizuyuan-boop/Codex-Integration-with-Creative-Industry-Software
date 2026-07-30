@@ -358,6 +358,31 @@ class AutocadDxfBridge(BaseBridge):
         ).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
 
+    def _annotate_svg_entities(self, text: str, document: Any) -> str:
+        try:
+            root = ET.fromstring(text)
+        except ET.ParseError as exc:
+            raise ValueError("generated SVG preview is not valid XML") from exc
+
+        paths = [
+            element for element in root.iter() if element.tag.rsplit("}", 1)[-1].lower() == "path"
+        ]
+        entities = list(document.modelspace())
+        if len(paths) != len(entities):
+            raise ValueError("generated SVG paths do not map one-to-one to DXF entities")
+
+        for index, (path, entity) in enumerate(zip(paths, entities), start=1):
+            path.set("id", f"dxf-entity-{index:04d}")
+            path.set("data-dxf-layer", str(entity.dxf.get("layer", "0")))
+            path.set("data-dxf-type", entity.dxftype())
+
+        ET.register_namespace("", "http://www.w3.org/2000/svg")
+        return ET.tostring(
+            root,
+            encoding="unicode",
+            xml_declaration=True,
+        )
+
     def _write_and_audit_dxf(
         self,
         normalized: dict[str, Any],
@@ -482,6 +507,9 @@ class AutocadDxfBridge(BaseBridge):
 
         path_count = 0
         background_count = 0
+        entity_ids = []
+        layer_entity_counts: Counter[str] = Counter()
+        entity_type_counts: Counter[str] = Counter()
         for element in root.iter():
             local_name = element.tag.rsplit("}", 1)[-1].lower()
             if local_name in {"a", "iframe", "object", "embed", "use", "video", "audio"}:
@@ -499,6 +527,22 @@ class AutocadDxfBridge(BaseBridge):
             if local_name == "path":
                 if not (element.get("d") or "").strip():
                     raise ValueError("generated SVG preview contains an empty path")
+                entity_id = (element.get("id") or "").strip()
+                layer_name = (element.get("data-dxf-layer") or "").strip()
+                entity_type = (element.get("data-dxf-type") or "").strip()
+                if not re.fullmatch(r"dxf-entity-[0-9]{4}", entity_id):
+                    raise ValueError("generated SVG path has an invalid entity ID")
+                if (
+                    not layer_name
+                    or len(layer_name) > 255
+                    or any(ord(character) < 32 for character in layer_name)
+                ):
+                    raise ValueError("generated SVG path has invalid DXF layer metadata")
+                if entity_type not in {"LINE", "LWPOLYLINE", "CIRCLE", "TEXT"}:
+                    raise ValueError("generated SVG path has invalid DXF type metadata")
+                entity_ids.append(entity_id)
+                layer_entity_counts[layer_name] += 1
+                entity_type_counts[entity_type] += 1
                 path_count += 1
             elif local_name == "rect":
                 if (element.get("fill") or "").lower() != "#ffffff":
@@ -506,6 +550,9 @@ class AutocadDxfBridge(BaseBridge):
                 background_count += 1
         if path_count == 0:
             raise ValueError("generated SVG preview contains no vector paths")
+        expected_ids = [f"dxf-entity-{index:04d}" for index in range(1, path_count + 1)]
+        if entity_ids != expected_ids:
+            raise ValueError("generated SVG entity IDs are not unique and sequential")
         if background_count != 1:
             raise ValueError("generated SVG preview must contain one white background")
         colors = {color.lower() for color in re.findall(r"#[0-9a-fA-F]{6}", text)}
@@ -515,6 +562,9 @@ class AutocadDxfBridge(BaseBridge):
         return {
             "verified": True,
             "path_count": path_count,
+            "layer_count": len(layer_entity_counts),
+            "layer_entity_counts": dict(sorted(layer_entity_counts.items())),
+            "entity_type_counts": dict(sorted(entity_type_counts.items())),
             "background_color": "#ffffff",
             "foreground_color": "#000000",
             "color_policy": "black_on_white",
@@ -547,8 +597,12 @@ class AutocadDxfBridge(BaseBridge):
             backend,
             config=preview_config,
         ).draw_layout(readback.modelspace())
-        staging_path.write_text(
+        annotated_svg = self._annotate_svg_entities(
             backend.get_string(layout.Page(0, 0)),
+            readback,
+        )
+        staging_path.write_text(
+            annotated_svg,
             encoding="utf-8",
         )
         verification = self._verify_svg_preview(staging_path)

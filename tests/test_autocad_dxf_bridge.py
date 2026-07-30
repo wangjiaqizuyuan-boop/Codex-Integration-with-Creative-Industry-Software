@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -237,6 +238,20 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                 "black_on_white",
                 manifest["preview_verification"]["color_policy"],
             )
+            self.assertEqual(2, manifest["preview_verification"]["layer_count"])
+            self.assertEqual(
+                {"OUTLINE": 4, "TEXT": 1},
+                manifest["preview_verification"]["layer_entity_counts"],
+            )
+            self.assertEqual(
+                {
+                    "CIRCLE": 1,
+                    "LINE": 1,
+                    "LWPOLYLINE": 2,
+                    "TEXT": 1,
+                },
+                manifest["preview_verification"]["entity_type_counts"],
+            )
             self.assertEqual(
                 0,
                 manifest["preview_verification"]["external_reference_count"],
@@ -244,6 +259,29 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             self.assertEqual(3, len(result["details"]["artifacts"]))
             self.assertTrue(all(item["sha256"] for item in result["details"]["artifacts"]))
             self.assertIn("<svg", preview_path.read_text(encoding="utf-8"))
+            preview_root = ET.fromstring(preview_path.read_text(encoding="utf-8"))
+            preview_paths = [
+                element
+                for element in preview_root.iter()
+                if element.tag.rsplit("}", 1)[-1] == "path"
+            ]
+            self.assertEqual(
+                [
+                    ("dxf-entity-0001", "OUTLINE", "LWPOLYLINE"),
+                    ("dxf-entity-0002", "OUTLINE", "LINE"),
+                    ("dxf-entity-0003", "OUTLINE", "CIRCLE"),
+                    ("dxf-entity-0004", "OUTLINE", "LWPOLYLINE"),
+                    ("dxf-entity-0005", "TEXT", "TEXT"),
+                ],
+                [
+                    (
+                        element.get("id"),
+                        element.get("data-dxf-layer"),
+                        element.get("data-dxf-type"),
+                    )
+                    for element in preview_paths
+                ],
+            )
 
             import ezdxf
 
@@ -385,6 +423,16 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "white background"):
                 bridge._verify_svg_preview(preview)
+
+    def test_svg_annotation_requires_one_path_per_entity(self) -> None:
+        class EmptyDocument:
+            def modelspace(self) -> list:
+                return []
+
+        bridge = autocad_dxf._bridge_instance
+        source = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M 0 0 L 10 10"/></svg>'
+        with self.assertRaisesRegex(ValueError, "one-to-one"):
+            bridge._annotate_svg_entities(source, EmptyDocument())
 
 
 if __name__ == "__main__":
