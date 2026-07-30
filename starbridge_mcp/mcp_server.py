@@ -3862,7 +3862,7 @@ def handle_request(message: JsonObject) -> JsonObject | None:
 
 
 def encode_message(message: JsonObject) -> str:
-    return json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n"
+    return json.dumps(message, ensure_ascii=True, separators=(",", ":")) + "\n"
 
 
 def serve_stdio(stdin: Any = None, stdout: Any = None) -> int:

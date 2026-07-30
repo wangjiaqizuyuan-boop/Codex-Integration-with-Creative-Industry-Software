@@ -7,7 +7,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from starbridge_mcp.mcp_server import handle_request, serve_stdio
+from starbridge_mcp.mcp_server import encode_message, handle_request, serve_stdio
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BANNED_OUTPUT_FRAGMENTS = ("C:\\Users\\", "/Users/", "/home/", "Desktop", "Documents", "AppData")
@@ -180,6 +180,14 @@ class McpStdioServerTests(unittest.TestCase):
         lines = [json.loads(line) for line in output_stream.getvalue().splitlines()]
         self.assertEqual([1, 2], [line["id"] for line in lines])
         self.assertIn("tools", lines[1]["result"])
+
+    def test_encoded_messages_are_safe_for_ascii_only_windows_stdio(self) -> None:
+        payload = {"jsonrpc": "2.0", "id": 3, "result": {"message": "已关联"}}
+
+        encoded = encode_message(payload)
+
+        encoded.encode("ascii", errors="strict")
+        self.assertEqual(payload, json.loads(encoded))
 
     def test_module_runs_as_stdio_process(self) -> None:
         initialize = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
