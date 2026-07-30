@@ -58,8 +58,8 @@ $result = @{
     dry_run = [bool]$DryRun
     confirm_export = [bool]$ConfirmExport
     exported_files = @(
-        Convert-ToRepoRelative -RepoRoot $repoRoot -PathValue $pngPath,
-        Convert-ToRepoRelative -RepoRoot $repoRoot -PathValue $jpgPath
+        (Convert-ToRepoRelative -RepoRoot $repoRoot -PathValue $pngPath)
+        (Convert-ToRepoRelative -RepoRoot $repoRoot -PathValue $jpgPath)
     )
     width = 1080
     height = 1080
