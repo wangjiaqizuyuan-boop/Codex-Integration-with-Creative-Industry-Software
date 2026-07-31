@@ -635,6 +635,61 @@ class AutocadDxfBridge(BaseBridge):
         verification["source_entity_count"] = len(readback.modelspace())
         return verification
 
+    def _verify_generation_manifest(
+        self,
+        manifest_path: Path,
+        *,
+        expected_artifacts: list[dict[str, Any]],
+        expected_content_sha256: str,
+        expected_mapping_sha256: str,
+    ) -> dict[str, Any]:
+        payload = manifest_path.read_bytes()
+        if not payload or len(payload) > 1024 * 1024:
+            raise ValueError("generated manifest has an invalid size")
+        try:
+            manifest = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("generated manifest is not valid UTF-8 JSON") from exc
+        if not isinstance(manifest, dict):
+            raise ValueError("generated manifest must contain one JSON object")
+        if (
+            manifest.get("schema_version") != "1.0"
+            or manifest.get("bridge") != self.bridge_id
+            or manifest.get("action") != "write_dxf"
+            or manifest.get("state") != "completed"
+        ):
+            raise ValueError("generated manifest identity does not match this CAD batch")
+        if (
+            len(expected_artifacts) != 2
+            or manifest.get("artifact") != expected_artifacts[0]
+            or manifest.get("artifacts") != expected_artifacts
+        ):
+            raise ValueError("generated manifest artifact digests do not match staged outputs")
+
+        verification = manifest.get("verification")
+        if (
+            not isinstance(verification, dict)
+            or verification.get("content_match") is not True
+            or verification.get("content_sha256") != expected_content_sha256
+        ):
+            raise ValueError("generated manifest DXF verification does not match readback")
+        preview_verification = manifest.get("preview_verification")
+        if (
+            not isinstance(preview_verification, dict)
+            or preview_verification.get("verified") is not True
+            or preview_verification.get("entity_metadata_match") is not True
+            or preview_verification.get("entity_mapping_sha256") != expected_mapping_sha256
+        ):
+            raise ValueError("generated manifest SVG verification does not match readback")
+
+        return {
+            "verified": True,
+            "schema_version": "1.0",
+            "artifact_count": len(expected_artifacts),
+            "size_bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+
     def _entity_points(self, entity: dict[str, Any]) -> list[list[float]]:
         entity_type = entity.get("type")
         if entity_type == "line":
@@ -837,6 +892,12 @@ class AutocadDxfBridge(BaseBridge):
                 json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
+            manifest_verification = self._verify_generation_manifest(
+                staging_manifest,
+                expected_artifacts=[dxf_artifact, preview_artifact],
+                expected_content_sha256=verification["content_sha256"],
+                expected_mapping_sha256=preview_verification["entity_mapping_sha256"],
+            )
 
             staging_dxf.replace(out_path)
             promoted_dxf = True
@@ -865,6 +926,7 @@ class AutocadDxfBridge(BaseBridge):
                     "artifacts": [dxf_artifact, preview_artifact, manifest_artifact],
                     "verification": verification,
                     "preview_verification": preview_verification,
+                    "manifest_verification": manifest_verification,
                     "summary": summary,
                 },
             )

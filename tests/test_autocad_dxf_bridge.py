@@ -263,6 +263,23 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             )
             self.assertEqual(3, len(result["details"]["artifacts"]))
             self.assertTrue(all(item["sha256"] for item in result["details"]["artifacts"]))
+            manifest_artifact = next(
+                item
+                for item in result["details"]["artifacts"]
+                if item["role"] == "generation_manifest"
+            )
+            manifest_verification = result["details"]["manifest_verification"]
+            self.assertTrue(manifest_verification["verified"])
+            self.assertEqual("1.0", manifest_verification["schema_version"])
+            self.assertEqual(2, manifest_verification["artifact_count"])
+            self.assertEqual(
+                manifest_artifact["size_bytes"],
+                manifest_verification["size_bytes"],
+            )
+            self.assertEqual(
+                manifest_artifact["sha256"],
+                manifest_verification["sha256"],
+            )
             self.assertIn("<svg", preview_path.read_text(encoding="utf-8"))
             preview_root = ET.fromstring(preview_path.read_text(encoding="utf-8"))
             preview_paths = [
@@ -382,6 +399,47 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             self.assertEqual([], list(Path(tmp).glob(".*.staging")))
 
     @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
+    def test_manifest_verification_failure_rolls_back_current_batch(self) -> None:
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        original_verify = bridge._verify_generation_manifest
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "rollback_manifest.dxf"
+
+            def fail_manifest(
+                _: Path,
+                *,
+                expected_artifacts: list[dict],
+                expected_content_sha256: str,
+                expected_mapping_sha256: str,
+            ) -> dict:
+                self.assertEqual(2, len(expected_artifacts))
+                self.assertRegex(expected_content_sha256, r"^[0-9a-f]{64}$")
+                self.assertRegex(expected_mapping_sha256, r"^[0-9a-f]{64}$")
+                raise ValueError("simulated manifest verification failure")
+
+            bridge._verify_generation_manifest = fail_manifest
+            try:
+                result = write_dxf(
+                    minimal_plan(),
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                bridge._verify_generation_manifest = original_verify
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assert_schema(result, "write_dxf")
+            self.assertFalse(result["ok"])
+            self.assertEqual("generation_failed", result["details"]["status"])
+            self.assertFalse(output.exists())
+            self.assertFalse(output.with_suffix(".preview.svg").exists())
+            self.assertFalse(output.with_suffix(".manifest.json").exists())
+            self.assertEqual([], list(Path(tmp).glob(".*.staging")))
+
+    @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
     def test_readback_geometry_mismatch_rolls_back_current_batch(self) -> None:
         import ezdxf
 
@@ -433,6 +491,54 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, "white background"):
                 bridge._verify_svg_preview(preview)
+
+    def test_manifest_verifier_rejects_tampered_artifact_digest(self) -> None:
+        bridge = autocad_dxf._bridge_instance
+        artifacts = [
+            {
+                "role": "cad_drawing",
+                "relative_path": "drawing.dxf",
+                "media_type": "image/vnd.dxf",
+                "size_bytes": 10,
+                "sha256": "a" * 64,
+            },
+            {
+                "role": "cad_preview",
+                "relative_path": "drawing.preview.svg",
+                "media_type": "image/svg+xml",
+                "size_bytes": 20,
+                "sha256": "b" * 64,
+            },
+        ]
+        manifest = {
+            "schema_version": "1.0",
+            "bridge": bridge.bridge_id,
+            "action": "write_dxf",
+            "state": "completed",
+            "artifact": artifacts[0],
+            "artifacts": [dict(item) for item in artifacts],
+            "verification": {
+                "content_match": True,
+                "content_sha256": "c" * 64,
+            },
+            "preview_verification": {
+                "verified": True,
+                "entity_metadata_match": True,
+                "entity_mapping_sha256": "d" * 64,
+            },
+        }
+        manifest["artifacts"][1]["sha256"] = "e" * 64
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = Path(tmp) / "tampered.manifest.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "artifact digests"):
+                bridge._verify_generation_manifest(
+                    manifest_path,
+                    expected_artifacts=artifacts,
+                    expected_content_sha256="c" * 64,
+                    expected_mapping_sha256="d" * 64,
+                )
 
     def test_svg_annotation_requires_one_path_per_entity(self) -> None:
         class EmptyDocument:
