@@ -225,6 +225,11 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             )
             self.assertEqual(2, len(manifest["artifacts"]))
             self.assertTrue(manifest["preview_verification"]["verified"])
+            self.assertTrue(manifest["preview_verification"]["entity_metadata_match"])
+            self.assertRegex(
+                manifest["preview_verification"]["entity_mapping_sha256"],
+                r"^[0-9a-f]{64}$",
+            )
             self.assertGreater(manifest["preview_verification"]["path_count"], 0)
             self.assertEqual(
                 "#ffffff",
@@ -348,7 +353,12 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             bridge.OUTPUT_ROOT = Path(tmp)
             output = Path(tmp) / "rollback_preview.dxf"
 
-            def fail_preview(_: Path) -> dict:
+            def fail_preview(
+                _: Path,
+                *,
+                expected_entity_metadata: list[dict[str, str]] | None = None,
+            ) -> dict:
+                self.assertIsNotNone(expected_entity_metadata)
                 raise ValueError("simulated preview verification failure")
 
             bridge._verify_svg_preview = fail_preview
@@ -433,6 +443,34 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
         source = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M 0 0 L 10 10"/></svg>'
         with self.assertRaisesRegex(ValueError, "one-to-one"):
             bridge._annotate_svg_entities(source, EmptyDocument())
+
+    def test_svg_preview_verifier_rejects_metadata_that_disagrees_with_readback(
+        self,
+    ) -> None:
+        bridge = autocad_dxf._bridge_instance
+        with tempfile.TemporaryDirectory() as tmp:
+            preview = Path(tmp) / "wrong-layer.svg"
+            preview.write_text(
+                (
+                    '<svg xmlns="http://www.w3.org/2000/svg">'
+                    '<rect fill="#ffffff" width="10" height="10"/>'
+                    '<path id="dxf-entity-0001" data-dxf-layer="WRONG" '
+                    'data-dxf-type="LINE" d="M 0 0 L 10 10" stroke="#000000"/>'
+                    "</svg>"
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "does not match DXF readback"):
+                bridge._verify_svg_preview(
+                    preview,
+                    expected_entity_metadata=[
+                        {
+                            "id": "dxf-entity-0001",
+                            "layer": "OUTLINE",
+                            "type": "LINE",
+                        }
+                    ],
+                )
 
 
 if __name__ == "__main__":

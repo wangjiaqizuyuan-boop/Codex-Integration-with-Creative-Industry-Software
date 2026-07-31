@@ -371,10 +371,10 @@ class AutocadDxfBridge(BaseBridge):
         if len(paths) != len(entities):
             raise ValueError("generated SVG paths do not map one-to-one to DXF entities")
 
-        for index, (path, entity) in enumerate(zip(paths, entities), start=1):
-            path.set("id", f"dxf-entity-{index:04d}")
-            path.set("data-dxf-layer", str(entity.dxf.get("layer", "0")))
-            path.set("data-dxf-type", entity.dxftype())
+        for path, metadata in zip(paths, self._svg_entity_metadata(document)):
+            path.set("id", metadata["id"])
+            path.set("data-dxf-layer", metadata["layer"])
+            path.set("data-dxf-type", metadata["type"])
 
         ET.register_namespace("", "http://www.w3.org/2000/svg")
         return ET.tostring(
@@ -382,6 +382,16 @@ class AutocadDxfBridge(BaseBridge):
             encoding="unicode",
             xml_declaration=True,
         )
+
+    def _svg_entity_metadata(self, document: Any) -> list[dict[str, str]]:
+        return [
+            {
+                "id": f"dxf-entity-{index:04d}",
+                "layer": str(entity.dxf.get("layer", "0")),
+                "type": entity.dxftype(),
+            }
+            for index, entity in enumerate(document.modelspace(), start=1)
+        ]
 
     def _write_and_audit_dxf(
         self,
@@ -472,7 +482,12 @@ class AutocadDxfBridge(BaseBridge):
             "content_sha256": readback_content_sha256,
         }
 
-    def _verify_svg_preview(self, path: Path) -> dict[str, Any]:
+    def _verify_svg_preview(
+        self,
+        path: Path,
+        *,
+        expected_entity_metadata: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
         payload = path.read_bytes()
         if not payload or len(payload) > 64 * 1024 * 1024:
             raise ValueError("generated SVG preview has an invalid size")
@@ -508,6 +523,7 @@ class AutocadDxfBridge(BaseBridge):
         path_count = 0
         background_count = 0
         entity_ids = []
+        entity_metadata: list[dict[str, str]] = []
         layer_entity_counts: Counter[str] = Counter()
         entity_type_counts: Counter[str] = Counter()
         for element in root.iter():
@@ -541,6 +557,7 @@ class AutocadDxfBridge(BaseBridge):
                 if entity_type not in {"LINE", "LWPOLYLINE", "CIRCLE", "TEXT"}:
                     raise ValueError("generated SVG path has invalid DXF type metadata")
                 entity_ids.append(entity_id)
+                entity_metadata.append({"id": entity_id, "layer": layer_name, "type": entity_type})
                 layer_entity_counts[layer_name] += 1
                 entity_type_counts[entity_type] += 1
                 path_count += 1
@@ -553,14 +570,19 @@ class AutocadDxfBridge(BaseBridge):
         expected_ids = [f"dxf-entity-{index:04d}" for index in range(1, path_count + 1)]
         if entity_ids != expected_ids:
             raise ValueError("generated SVG entity IDs are not unique and sequential")
+        if expected_entity_metadata is not None and entity_metadata != expected_entity_metadata:
+            raise ValueError("generated SVG entity metadata does not match DXF readback")
         if background_count != 1:
             raise ValueError("generated SVG preview must contain one white background")
         colors = {color.lower() for color in re.findall(r"#[0-9a-fA-F]{6}", text)}
         if colors != {"#000000", "#ffffff"}:
             raise ValueError("generated SVG preview does not use the black-on-white palette")
+        entity_mapping_sha256 = self._content_sha256({"entities": entity_metadata})
 
         return {
             "verified": True,
+            "entity_metadata_match": expected_entity_metadata is not None,
+            "entity_mapping_sha256": entity_mapping_sha256,
             "path_count": path_count,
             "layer_count": len(layer_entity_counts),
             "layer_entity_counts": dict(sorted(layer_entity_counts.items())),
@@ -605,7 +627,10 @@ class AutocadDxfBridge(BaseBridge):
             annotated_svg,
             encoding="utf-8",
         )
-        verification = self._verify_svg_preview(staging_path)
+        verification = self._verify_svg_preview(
+            staging_path,
+            expected_entity_metadata=self._svg_entity_metadata(readback),
+        )
         verification["source_audit_errors"] = len(auditor.errors)
         verification["source_entity_count"] = len(readback.modelspace())
         return verification
