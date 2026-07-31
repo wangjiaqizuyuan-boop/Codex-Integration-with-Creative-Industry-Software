@@ -270,6 +270,7 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             )
             manifest_verification = result["details"]["manifest_verification"]
             self.assertTrue(manifest_verification["verified"])
+            self.assertTrue(manifest_verification["artifact_digests_verified"])
             self.assertEqual("1.0", manifest_verification["schema_version"])
             self.assertEqual(2, manifest_verification["artifact_count"])
             self.assertEqual(
@@ -411,10 +412,12 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                 _: Path,
                 *,
                 expected_artifacts: list[dict],
+                staged_artifact_paths: list[Path],
                 expected_content_sha256: str,
                 expected_mapping_sha256: str,
             ) -> dict:
                 self.assertEqual(2, len(expected_artifacts))
+                self.assertEqual(2, len(staged_artifact_paths))
                 self.assertRegex(expected_content_sha256, r"^[0-9a-f]{64}$")
                 self.assertRegex(expected_mapping_sha256, r"^[0-9a-f]{64}$")
                 raise ValueError("simulated manifest verification failure")
@@ -536,6 +539,63 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                 bridge._verify_generation_manifest(
                     manifest_path,
                     expected_artifacts=artifacts,
+                    staged_artifact_paths=[
+                        Path(tmp) / "drawing.dxf",
+                        Path(tmp) / "drawing.preview.svg",
+                    ],
+                    expected_content_sha256="c" * 64,
+                    expected_mapping_sha256="d" * 64,
+                )
+
+    def test_manifest_verifier_rejects_changed_staged_bytes(self) -> None:
+        bridge = autocad_dxf._bridge_instance
+        with tempfile.TemporaryDirectory() as tmp:
+            dxf_path = Path(tmp) / "drawing.dxf"
+            preview_path = Path(tmp) / "drawing.preview.svg"
+            dxf_path.write_bytes(b"audited-dxf")
+            preview_path.write_bytes(b"<svg/>")
+            artifacts = [
+                {
+                    "role": "cad_drawing",
+                    "relative_path": "drawing.dxf",
+                    "media_type": "image/vnd.dxf",
+                    "size_bytes": dxf_path.stat().st_size,
+                    "sha256": bridge._sha256(dxf_path),
+                },
+                {
+                    "role": "cad_preview",
+                    "relative_path": "drawing.preview.svg",
+                    "media_type": "image/svg+xml",
+                    "size_bytes": preview_path.stat().st_size,
+                    "sha256": bridge._sha256(preview_path),
+                },
+            ]
+            manifest = {
+                "schema_version": "1.0",
+                "bridge": bridge.bridge_id,
+                "action": "write_dxf",
+                "state": "completed",
+                "artifact": artifacts[0],
+                "artifacts": artifacts,
+                "verification": {
+                    "content_match": True,
+                    "content_sha256": "c" * 64,
+                },
+                "preview_verification": {
+                    "verified": True,
+                    "entity_metadata_match": True,
+                    "entity_mapping_sha256": "d" * 64,
+                },
+            }
+            manifest_path = Path(tmp) / "drawing.manifest.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            preview_path.write_bytes(b"<svg>changed</svg>")
+
+            with self.assertRaisesRegex(ValueError, "artifact bytes"):
+                bridge._verify_generation_manifest(
+                    manifest_path,
+                    expected_artifacts=artifacts,
+                    staged_artifact_paths=[dxf_path, preview_path],
                     expected_content_sha256="c" * 64,
                     expected_mapping_sha256="d" * 64,
                 )
