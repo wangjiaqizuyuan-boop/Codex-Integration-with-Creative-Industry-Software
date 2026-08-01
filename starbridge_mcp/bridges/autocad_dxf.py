@@ -79,7 +79,14 @@ class AutocadDxfBridge(BaseBridge):
                 "ezdxf_available": ezdxf_available,
                 "output_root": "examples/cad/output",
                 "default_dry_run": True,
-                "supported_entities": ["line", "polyline", "circle", "rectangle", "text"],
+                "supported_entities": [
+                    "line",
+                    "polyline",
+                    "circle",
+                    "arc",
+                    "rectangle",
+                    "text",
+                ],
             },
             warnings=warnings,
             next_steps=next_steps,
@@ -292,6 +299,14 @@ class AutocadDxfBridge(BaseBridge):
                     center=self._canonical_point(entity["center"]),
                     radius=self._canonical_number(entity["radius"]),
                 )
+            elif entity_type == "arc":
+                canonical.update(
+                    type="ARC",
+                    center=self._canonical_point(entity["center"]),
+                    radius=self._canonical_number(entity["radius"]),
+                    start_angle=self._canonical_number(entity["start_angle"]),
+                    end_angle=self._canonical_number(entity["end_angle"]),
+                )
             elif entity_type == "rectangle":
                 x = entity["x"]
                 y = entity["y"]
@@ -365,6 +380,13 @@ class AutocadDxfBridge(BaseBridge):
                 canonical.update(
                     center=self._canonical_point(entity.dxf.center),
                     radius=self._canonical_number(entity.dxf.radius),
+                )
+            elif entity_type == "ARC":
+                canonical.update(
+                    center=self._canonical_point(entity.dxf.center),
+                    radius=self._canonical_number(entity.dxf.radius),
+                    start_angle=self._canonical_number(entity.dxf.start_angle),
+                    end_angle=self._canonical_number(entity.dxf.end_angle),
                 )
             elif entity_type == "TEXT":
                 canonical.update(
@@ -466,6 +488,14 @@ class AutocadDxfBridge(BaseBridge):
                 modelspace.add_circle(
                     entity["center"],
                     entity["radius"],
+                    dxfattribs=attributes,
+                )
+            elif entity_type == "arc":
+                modelspace.add_arc(
+                    entity["center"],
+                    entity["radius"],
+                    entity["start_angle"],
+                    entity["end_angle"],
                     dxfattribs=attributes,
                 )
             elif entity_type == "rectangle":
@@ -589,7 +619,7 @@ class AutocadDxfBridge(BaseBridge):
                     or any(ord(character) < 32 for character in layer_name)
                 ):
                     raise ValueError("generated SVG path has invalid DXF layer metadata")
-                if entity_type not in {"LINE", "LWPOLYLINE", "CIRCLE", "TEXT"}:
+                if entity_type not in {"LINE", "LWPOLYLINE", "CIRCLE", "ARC", "TEXT"}:
                     raise ValueError("generated SVG path has invalid DXF type metadata")
                 entity_ids.append(entity_id)
                 entity_metadata.append({"id": entity_id, "layer": layer_name, "type": entity_type})
@@ -754,6 +784,25 @@ class AutocadDxfBridge(BaseBridge):
             x, y = entity["center"]
             radius = entity["radius"]
             return [[x - radius, y - radius], [x + radius, y + radius]]
+        if entity_type == "arc":
+            x, y = entity["center"]
+            radius = entity["radius"]
+            start_angle = entity["start_angle"]
+            end_angle = entity["end_angle"]
+            sweep = (end_angle - start_angle) % 360.0
+            angles = [start_angle, end_angle]
+            angles.extend(
+                angle
+                for angle in (0.0, 90.0, 180.0, 270.0)
+                if (angle - start_angle) % 360.0 <= sweep
+            )
+            return [
+                [
+                    x + radius * math.cos(math.radians(angle)),
+                    y + radius * math.sin(math.radians(angle)),
+                ]
+                for angle in angles
+            ]
         if entity_type == "rectangle":
             x = entity["x"]
             y = entity["y"]

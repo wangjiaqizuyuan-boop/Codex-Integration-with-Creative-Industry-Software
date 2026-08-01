@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import copy
+import math
 from pathlib import PureWindowsPath
 from typing import Any
 
 SUPPORTED_UNITS = {"mm", "cm", "m", "inch"}
-SUPPORTED_ENTITY_TYPES = {"line", "polyline", "circle", "rectangle", "text"}
+SUPPORTED_ENTITY_TYPES = {"line", "polyline", "circle", "arc", "rectangle", "text"}
 MAX_ABS_COORDINATE = 1_000_000
 MAX_ENTITY_COUNT = 1_000
 DEFAULT_LAYERS = [
@@ -32,6 +33,16 @@ def _positive_number(value: Any, field: str) -> tuple[float | None, str | None]:
     if number <= 0:
         return None, f"{field} must be greater than 0"
     return number, None
+
+
+def _angle(value: Any, field: str) -> tuple[float | None, str | None]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None, f"{field} must be a number"
+    if not math.isfinite(number):
+        return None, f"{field} must be finite"
+    return number % 360.0, None
 
 
 def _validate_coordinate_range(point: list[float], field: str) -> str | None:
@@ -128,6 +139,38 @@ def normalize_entity(entity: Any, index: int) -> tuple[dict[str, Any] | None, li
             errors.append(error)
         else:
             normalized["radius"] = radius
+    elif entity_type == "arc":
+        point, error = _point2(entity.get("center"), f"entities[{index}].center")
+        if error:
+            errors.append(error)
+        else:
+            range_error = _validate_coordinate_range(point, f"entities[{index}].center")
+            if range_error:
+                errors.append(range_error)
+            normalized["center"] = point
+        radius, error = _positive_number(entity.get("radius"), f"entities[{index}].radius")
+        if error:
+            errors.append(error)
+        else:
+            normalized["radius"] = radius
+        start_angle, start_error = _angle(
+            entity.get("start_angle"), f"entities[{index}].start_angle"
+        )
+        end_angle, end_error = _angle(entity.get("end_angle"), f"entities[{index}].end_angle")
+        if start_error:
+            errors.append(start_error)
+        else:
+            normalized["start_angle"] = start_angle
+        if end_error:
+            errors.append(end_error)
+        else:
+            normalized["end_angle"] = end_angle
+        if (
+            start_angle is not None
+            and end_angle is not None
+            and math.isclose(start_angle, end_angle, rel_tol=0.0, abs_tol=1e-9)
+        ):
+            errors.append(f"entities[{index}] arc angles must describe a non-zero sweep")
     elif entity_type == "rectangle":
         for field in ("x", "y"):
             try:

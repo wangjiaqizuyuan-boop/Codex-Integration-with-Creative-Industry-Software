@@ -42,6 +42,24 @@ def minimal_plan() -> dict:
     }
 
 
+def arc_plan() -> dict:
+    return {
+        "units": "mm",
+        "layers": [{"name": "OUTLINE", "color": 7}],
+        "entities": [
+            {
+                "type": "arc",
+                "layer": "OUTLINE",
+                "center": [200, 200],
+                "radius": 100,
+                "start_angle": 0,
+                "end_angle": 180,
+            }
+        ],
+        "output": "arc_demo.dxf",
+    }
+
+
 class AutoCadDxfBridgeTests(unittest.TestCase):
     def assert_schema(self, result: dict, action: str) -> None:
         self.assertEqual(
@@ -98,6 +116,27 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
         self.assert_schema(result, "validate_cad_plan")
         self.assertTrue(result["ok"])
         self.assertEqual(5, result["details"]["entity_count"])
+
+    def test_validate_and_summarize_arc_plan(self) -> None:
+        validation = validate_cad_plan(arc_plan())
+        self.assert_schema(validation, "validate_cad_plan")
+        self.assertTrue(validation["ok"])
+
+        summary = summarize_plan(arc_plan())
+        self.assert_schema(summary, "summarize_plan")
+        self.assertTrue(summary["ok"])
+        self.assertEqual({"arc": 1}, summary["details"]["entity_types"])
+        self.assertEqual(
+            {"min_x": 100.0, "min_y": 200.0, "max_x": 300.0, "max_y": 300.0},
+            summary["details"]["bbox"],
+        )
+
+    def test_validate_cad_plan_rejects_ambiguous_arc_angles(self) -> None:
+        plan = arc_plan()
+        plan["entities"][0]["end_angle"] = 360
+        result = validate_cad_plan(plan)
+        self.assert_schema(result, "validate_cad_plan")
+        self.assertFalse(result["ok"])
 
     def test_create_dxf_plan_accepts_prompt_and_spec(self) -> None:
         prompt_result = create_dxf_plan("生成一个矩形边框和标题文字")
@@ -336,6 +375,59 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             document = ezdxf.readfile(output)
             self.assertFalse(document.audit().has_errors)
             self.assertEqual(5, len(document.modelspace()))
+
+    @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
+    def test_confirmed_write_creates_verified_arc_delivery(self) -> None:
+        import ezdxf
+
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "verified_arc.dxf"
+            try:
+                result = write_dxf(
+                    arc_plan(),
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assert_schema(result, "write_dxf")
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["details"]["verification"]["content_match"])
+            self.assertEqual(0, result["details"]["verification"]["audit_errors"])
+            self.assertEqual(
+                {"ARC": 1},
+                result["details"]["preview_verification"]["entity_type_counts"],
+            )
+            self.assertTrue(result["details"]["delivery_verification"]["verified"])
+
+            document = ezdxf.readfile(output)
+            arc = next(iter(document.modelspace().query("ARC")))
+            self.assertAlmostEqual(200.0, arc.dxf.center.x)
+            self.assertAlmostEqual(200.0, arc.dxf.center.y)
+            self.assertAlmostEqual(100.0, arc.dxf.radius)
+            self.assertAlmostEqual(0.0, arc.dxf.start_angle)
+            self.assertAlmostEqual(180.0, arc.dxf.end_angle)
+
+            manifest = json.loads(output.with_suffix(".manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                result["details"]["verification"]["content_sha256"],
+                manifest["verification"]["content_sha256"],
+            )
+            preview_root = ET.fromstring(
+                output.with_suffix(".preview.svg").read_text(encoding="utf-8")
+            )
+            preview_paths = [
+                element
+                for element in preview_root.iter()
+                if element.tag.rsplit("}", 1)[-1] == "path"
+            ]
+            self.assertEqual(1, len(preview_paths))
+            self.assertEqual("ARC", preview_paths[0].get("data-dxf-type"))
 
     @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
     def test_confirmed_write_never_overwrites_existing_batch(self) -> None:

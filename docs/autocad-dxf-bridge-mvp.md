@@ -35,6 +35,7 @@
 | `line` | `start`, `end`, `layer` |
 | `polyline` | `points`, `layer` |
 | `circle` | `center`, `radius`, `layer` |
+| `arc` | `center`, `radius`, `start_angle`, `end_angle`, `layer` |
 | `rectangle` | `x`, `y`, `width`, `height`, `layer` |
 | `text` | `position`, `value`, `height`, `layer` |
 
@@ -60,7 +61,7 @@ python examples\cad\generate_dxf_plan.py `
 ## 后续扩展
 
 1. 把 DXF plan 接入 KORYAO 核心 server，等待核心分支合并后再注册。
-2. 增加更多实体：arc、dimension、mtext、hatch。
+2. 增加更多实体：dimension、mtext、hatch。
 3. 增加 AutoCAD COM 打开 DXF 的可选验证，但默认关闭。
 4. 研究 AutoCAD LT File IPC，不直接依赖窗口焦点。
 5. 增加 DWG 打开验证前的人为确认流程。
