@@ -646,6 +646,7 @@ class AutocadDxfBridge(BaseBridge):
         *,
         expected_artifacts: list[dict[str, Any]],
         artifact_paths: list[Path],
+        expected_recovery: dict[str, Any],
         expected_content_sha256: str,
         expected_mapping_sha256: str,
     ) -> dict[str, Any]:
@@ -675,6 +676,8 @@ class AutocadDxfBridge(BaseBridge):
         generation_id = self._generation_id(expected_artifacts)
         if manifest.get("generation_id") != generation_id:
             raise ValueError("generated manifest ID does not match CAD artifacts")
+        if manifest.get("recovery") != expected_recovery:
+            raise ValueError("generated manifest recovery evidence does not match this CAD batch")
         for artifact, artifact_path in zip(expected_artifacts, artifact_paths, strict=True):
             if (
                 not artifact_path.is_file()
@@ -704,6 +707,7 @@ class AutocadDxfBridge(BaseBridge):
             "verified": True,
             "schema_version": "1.0",
             "generation_id": generation_id,
+            "recovery": expected_recovery,
             "artifact_count": len(expected_artifacts),
             "artifact_digests_verified": True,
             "size_bytes": len(payload),
@@ -897,6 +901,11 @@ class AutocadDxfBridge(BaseBridge):
                 warnings=["Choose a new output name; existing files are preserved."],
                 next_steps=["Use a unique .dxf filename inside examples/cad/output."],
             )
+        recovery = {
+            "stale_staging_recovered": recovered_staging_batch,
+            "recovered_file_count": len(staging_present) if recovered_staging_batch else 0,
+            "minimum_age_seconds": self.STAGING_RECOVERY_MIN_AGE_SECONDS,
+        }
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
         promoted_dxf = False
@@ -929,6 +938,7 @@ class AutocadDxfBridge(BaseBridge):
                 "action": "write_dxf",
                 "state": "completed",
                 "generation_id": generation_id,
+                "recovery": recovery,
                 "artifact": dxf_artifact,
                 "artifacts": [dxf_artifact, preview_artifact],
                 "plan_summary": summary,
@@ -943,6 +953,7 @@ class AutocadDxfBridge(BaseBridge):
                 staging_manifest,
                 expected_artifacts=[dxf_artifact, preview_artifact],
                 artifact_paths=[staging_dxf, staging_preview],
+                expected_recovery=recovery,
                 expected_content_sha256=verification["content_sha256"],
                 expected_mapping_sha256=preview_verification["entity_mapping_sha256"],
             )
@@ -958,6 +969,7 @@ class AutocadDxfBridge(BaseBridge):
                 manifest_path,
                 expected_artifacts=[dxf_artifact, preview_artifact],
                 artifact_paths=[out_path, preview_path],
+                expected_recovery=recovery,
                 expected_content_sha256=verification["content_sha256"],
                 expected_mapping_sha256=preview_verification["entity_mapping_sha256"],
             )
@@ -980,6 +992,7 @@ class AutocadDxfBridge(BaseBridge):
                     "result_ready": True,
                     "confirm_write": confirm_write,
                     "recovered_staging_batch": recovered_staging_batch,
+                    "recovery": recovery,
                     "generation_id": generation_id,
                     "artifacts": [dxf_artifact, preview_artifact, manifest_artifact],
                     "verification": verification,

@@ -23,6 +23,7 @@
 - manifest 记录 DXF 与 SVG 的相对路径、字节数和 SHA-256，以及内容指纹、实体数、SVG 路径与图层计数、audit 结果、黑白配色和外部引用检查结果。
 - manifest 写入 staging 后会重新解析，并逐项核对两个产物摘要、当前 staging 文件字节、DXF 内容指纹与 SVG 实体映射指纹；三项文件晋升到最终名称后还会整批回读一次，任一不一致都回滚。
 - 真实生成会从 DXF 与 SVG 的规范化产物描述符计算稳定 `generation_id`，并同时写入 manifest、验证证据和调用结果，供调用方精确关联同一批次。
+- manifest 与调用结果还会记录无路径、无时间戳的恢复证据：是否清理陈旧 staging、清理数量及最小年龄策略；staging 与最终交付 verifier 都会核对该证据。
 - 输出统一经过 KORYAO sanitizer，不输出真实用户目录。
 
 ## 支持的实体类型

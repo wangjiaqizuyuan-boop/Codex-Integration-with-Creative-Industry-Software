@@ -221,6 +221,14 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             generation_id = result["details"]["generation_id"]
             self.assertRegex(generation_id, r"^sha256:[0-9a-f]{64}$")
             self.assertEqual(generation_id, manifest["generation_id"])
+            self.assertEqual(
+                {
+                    "stale_staging_recovered": False,
+                    "recovered_file_count": 0,
+                    "minimum_age_seconds": bridge.STAGING_RECOVERY_MIN_AGE_SECONDS,
+                },
+                manifest["recovery"],
+            )
             self.assertEqual(0, manifest["verification"]["audit_errors"])
             self.assertEqual(5, manifest["verification"]["entity_count"])
             self.assertTrue(manifest["verification"]["content_match"])
@@ -277,6 +285,7 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             self.assertTrue(manifest_verification["verified"])
             self.assertTrue(manifest_verification["artifact_digests_verified"])
             self.assertEqual(generation_id, manifest_verification["generation_id"])
+            self.assertEqual(manifest["recovery"], manifest_verification["recovery"])
             self.assertEqual("1.0", manifest_verification["schema_version"])
             self.assertEqual(2, manifest_verification["artifact_count"])
             self.assertEqual(
@@ -292,6 +301,7 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             self.assertTrue(delivery_verification["artifact_digests_verified"])
             self.assertTrue(delivery_verification["promoted_artifacts_verified"])
             self.assertEqual(generation_id, delivery_verification["generation_id"])
+            self.assertEqual(manifest["recovery"], delivery_verification["recovery"])
             self.assertEqual(
                 manifest_artifact["sha256"],
                 delivery_verification["sha256"],
@@ -406,6 +416,18 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             self.assert_schema(result, "write_dxf")
             self.assertTrue(result["ok"])
             self.assertTrue(result["details"]["recovered_staging_batch"])
+            self.assertEqual(
+                {
+                    "stale_staging_recovered": True,
+                    "recovered_file_count": 3,
+                    "minimum_age_seconds": bridge.STAGING_RECOVERY_MIN_AGE_SECONDS,
+                },
+                result["details"]["recovery"],
+            )
+            recovered_manifest = json.loads(
+                output.with_suffix(".manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(result["details"]["recovery"], recovered_manifest["recovery"])
             self.assertTrue(output.is_file())
             self.assertTrue(output.with_suffix(".preview.svg").is_file())
             self.assertTrue(output.with_suffix(".manifest.json").is_file())
@@ -512,11 +534,13 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                 *,
                 expected_artifacts: list[dict],
                 artifact_paths: list[Path],
+                expected_recovery: dict,
                 expected_content_sha256: str,
                 expected_mapping_sha256: str,
             ) -> dict:
                 self.assertEqual(2, len(expected_artifacts))
                 self.assertEqual(2, len(artifact_paths))
+                self.assertFalse(expected_recovery["stale_staging_recovered"])
                 self.assertRegex(expected_content_sha256, r"^[0-9a-f]{64}$")
                 self.assertRegex(expected_mapping_sha256, r"^[0-9a-f]{64}$")
                 raise ValueError("simulated manifest verification failure")
@@ -556,6 +580,7 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                 *,
                 expected_artifacts: list[dict],
                 artifact_paths: list[Path],
+                expected_recovery: dict,
                 expected_content_sha256: str,
                 expected_mapping_sha256: str,
             ) -> dict:
@@ -565,6 +590,7 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                     manifest_path,
                     expected_artifacts=expected_artifacts,
                     artifact_paths=artifact_paths,
+                    expected_recovery=expected_recovery,
                     expected_content_sha256=expected_content_sha256,
                     expected_mapping_sha256=expected_mapping_sha256,
                 )
@@ -670,6 +696,11 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             "action": "write_dxf",
             "state": "completed",
             "generation_id": bridge._generation_id(artifacts),
+            "recovery": {
+                "stale_staging_recovered": False,
+                "recovered_file_count": 0,
+                "minimum_age_seconds": bridge.STAGING_RECOVERY_MIN_AGE_SECONDS,
+            },
             "artifact": artifacts[0],
             "artifacts": [dict(item) for item in artifacts],
             "verification": {
@@ -695,6 +726,7 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                         Path(tmp) / "drawing.dxf",
                         Path(tmp) / "drawing.preview.svg",
                     ],
+                    expected_recovery=manifest["recovery"],
                     expected_content_sha256="c" * 64,
                     expected_mapping_sha256="d" * 64,
                 )
@@ -728,6 +760,11 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                 "action": "write_dxf",
                 "state": "completed",
                 "generation_id": bridge._generation_id(artifacts),
+                "recovery": {
+                    "stale_staging_recovered": False,
+                    "recovered_file_count": 0,
+                    "minimum_age_seconds": bridge.STAGING_RECOVERY_MIN_AGE_SECONDS,
+                },
                 "artifact": artifacts[0],
                 "artifacts": artifacts,
                 "verification": {
@@ -749,6 +786,7 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                     manifest_path,
                     expected_artifacts=artifacts,
                     artifact_paths=[dxf_path, preview_path],
+                    expected_recovery=manifest["recovery"],
                     expected_content_sha256="c" * 64,
                     expected_mapping_sha256="d" * 64,
                 )
