@@ -523,10 +523,77 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             self.assert_schema(result, "write_dxf")
             self.assertFalse(result["ok"])
             self.assertEqual("generation_failed", result["details"]["status"])
+            self.assertEqual(
+                {
+                    "type": "verification_error",
+                    "retry_safe": True,
+                    "same_output_retry_allowed": True,
+                },
+                result["details"]["failure"],
+            )
+            self.assertTrue(result["details"]["rollback"]["complete"])
+            self.assertGreaterEqual(result["details"]["rollback"]["removed_file_count"], 1)
+            self.assertEqual(0, result["details"]["rollback"]["failed_file_count"])
             self.assertFalse(output.exists())
             self.assertFalse(output.with_suffix(".preview.svg").exists())
             self.assertFalse(output.with_suffix(".manifest.json").exists())
             self.assertEqual([], list(Path(tmp).glob(".*.staging")))
+
+    @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
+    def test_generation_failure_reports_incomplete_rollback_without_paths(self) -> None:
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        original_verify = bridge._verify_svg_preview
+        original_unlink = Path.unlink
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "blocked_rollback.dxf"
+            blocked_staging_name = f".{output.name}.staging"
+
+            def fail_preview(
+                _: Path,
+                *,
+                expected_entity_metadata: list[dict[str, str]] | None = None,
+            ) -> dict:
+                self.assertIsNotNone(expected_entity_metadata)
+                raise ValueError("simulated preview verification failure")
+
+            def block_one_unlink(path: Path, *, missing_ok: bool = False) -> None:
+                if path.name == blocked_staging_name:
+                    raise PermissionError("simulated cleanup failure")
+                original_unlink(path, missing_ok=missing_ok)
+
+            bridge._verify_svg_preview = fail_preview
+            Path.unlink = block_one_unlink
+            try:
+                result = write_dxf(
+                    minimal_plan(),
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                Path.unlink = original_unlink
+                bridge._verify_svg_preview = original_verify
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assert_schema(result, "write_dxf")
+            self.assertFalse(result["ok"])
+            self.assertEqual("generation_rollback_failed", result["details"]["status"])
+            self.assertEqual("verification_error", result["details"]["failure"]["type"])
+            self.assertFalse(result["details"]["failure"]["retry_safe"])
+            self.assertFalse(result["details"]["failure"]["same_output_retry_allowed"])
+            self.assertEqual(
+                {
+                    "complete": False,
+                    "removed_file_count": 1,
+                    "failed_file_count": 1,
+                },
+                result["details"]["rollback"],
+            )
+            self.assertTrue(output.with_name(blocked_staging_name).is_file())
+            self.assertFalse(output.exists())
+            self.assertNotIn(str(Path(tmp)), json.dumps(result, ensure_ascii=False))
 
     @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
     def test_manifest_verification_failure_rolls_back_current_batch(self) -> None:

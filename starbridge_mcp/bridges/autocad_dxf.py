@@ -218,6 +218,35 @@ class AutocadDxfBridge(BaseBridge):
                 digest.update(chunk)
         return digest.hexdigest()
 
+    @staticmethod
+    def _generation_failure_type(error: Exception) -> str:
+        if isinstance(error, ImportError):
+            return "dependency_error"
+        if isinstance(error, OSError):
+            return "io_error"
+        if isinstance(error, RuntimeError):
+            return "runtime_error"
+        return "verification_error"
+
+    @staticmethod
+    def _rollback_generation_paths(paths: list[Path]) -> dict[str, Any]:
+        removed_file_count = 0
+        failed_file_count = 0
+        for path in paths:
+            try:
+                existed = path.exists() or path.is_symlink()
+                path.unlink(missing_ok=True)
+            except OSError:
+                failed_file_count += 1
+            else:
+                if existed:
+                    removed_file_count += 1
+        return {
+            "complete": failed_file_count == 0,
+            "removed_file_count": removed_file_count,
+            "failed_file_count": failed_file_count,
+        }
+
     def _unit_code(self, unit_name: str | None) -> int:
         from ezdxf import units
 
@@ -1034,29 +1063,51 @@ class AutocadDxfBridge(BaseBridge):
                     "summary": summary,
                 },
             )
-        except (ImportError, OSError, RuntimeError, ValueError):
-            for path in (staging_dxf, staging_preview, staging_manifest):
-                path.unlink(missing_ok=True)
+        except (ImportError, OSError, RuntimeError, ValueError) as error:
+            rollback_paths = [staging_dxf, staging_preview, staging_manifest]
             if promoted_manifest:
-                manifest_path.unlink(missing_ok=True)
+                rollback_paths.append(manifest_path)
             if promoted_preview:
-                preview_path.unlink(missing_ok=True)
+                rollback_paths.append(preview_path)
             if promoted_dxf:
-                out_path.unlink(missing_ok=True)
+                rollback_paths.append(out_path)
+            rollback = self._rollback_generation_paths(rollback_paths)
+            rollback_complete = rollback["complete"]
+            failure = {
+                "type": self._generation_failure_type(error),
+                "retry_safe": rollback_complete,
+                "same_output_retry_allowed": rollback_complete,
+            }
             return self._result(
                 ok=False,
                 action="write_dxf",
-                message="DXF generation failed; the current batch was rolled back.",
+                message=(
+                    "DXF generation failed; the current batch was rolled back."
+                    if rollback_complete
+                    else "DXF generation failed and rollback was incomplete."
+                ),
                 details={
                     "dry_run": False,
                     "state": "failed",
                     "terminal": True,
                     "result_ready": False,
-                    "status": "generation_failed",
+                    "status": (
+                        "generation_failed" if rollback_complete else "generation_rollback_failed"
+                    ),
+                    "failure": failure,
+                    "rollback": rollback,
                     "confirm_write": confirm_write,
                 },
-                warnings=["No partial output from the current batch was accepted."],
-                next_steps=["Review the validated plan and retry with a new output name."],
+                warnings=[
+                    "No partial output from the current batch was accepted."
+                    if rollback_complete
+                    else "Some batch files could not be removed; no output was accepted."
+                ],
+                next_steps=[
+                    "Resolve the reported failure type and retry the same output name."
+                    if rollback_complete
+                    else "Inspect the output sandbox and retry with a unique output name."
+                ],
             )
 
 
