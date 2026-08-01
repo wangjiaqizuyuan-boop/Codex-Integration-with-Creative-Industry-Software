@@ -847,17 +847,34 @@ class AutocadDxfBridge(BaseBridge):
         staging_dxf = out_path.with_name(f".{out_path.name}.staging")
         staging_preview = preview_path.with_name(f".{preview_path.name}.staging")
         staging_manifest = manifest_path.with_name(f".{manifest_path.name}.staging")
-        if any(
-            path.exists() or path.is_symlink()
-            for path in (
-                out_path,
-                preview_path,
-                manifest_path,
-                staging_dxf,
-                staging_preview,
-                staging_manifest,
-            )
+        final_paths = (out_path, preview_path, manifest_path)
+        staging_paths = (staging_dxf, staging_preview, staging_manifest)
+        final_present = [path for path in final_paths if path.exists() or path.is_symlink()]
+        staging_present = [path for path in staging_paths if path.exists() or path.is_symlink()]
+        recovered_staging_batch = False
+        if (
+            not final_present
+            and staging_present
+            and all(path.is_file() and not path.is_symlink() for path in staging_present)
         ):
+            try:
+                for path in staging_present:
+                    path.unlink()
+                recovered_staging_batch = True
+            except OSError:
+                return self._result(
+                    ok=False,
+                    action="write_dxf",
+                    message="Stale CAD staging files could not be cleaned safely.",
+                    details={
+                        "dry_run": False,
+                        "status": "stale_staging_cleanup_failed",
+                        "confirm_write": confirm_write,
+                    },
+                    warnings=["No final output was overwritten."],
+                    next_steps=["Inspect the exact output batch and retry with a new filename."],
+                )
+        elif final_present or staging_present:
             return self._result(
                 ok=False,
                 action="write_dxf",
@@ -952,6 +969,7 @@ class AutocadDxfBridge(BaseBridge):
                     "terminal": True,
                     "result_ready": True,
                     "confirm_write": confirm_write,
+                    "recovered_staging_batch": recovered_staging_batch,
                     "generation_id": generation_id,
                     "artifacts": [dxf_artifact, preview_artifact, manifest_artifact],
                     "verification": verification,

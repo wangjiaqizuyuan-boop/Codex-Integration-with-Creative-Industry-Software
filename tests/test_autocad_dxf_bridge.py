@@ -376,6 +376,63 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             self.assertFalse(output.with_suffix(".manifest.json").exists())
 
     @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
+    def test_confirmed_write_recovers_regular_staging_only_batch(self) -> None:
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "recover_staging.dxf"
+            staging_paths = [
+                output.with_name(f".{output.name}.staging"),
+                output.with_name(f".{output.stem}.preview.svg.staging"),
+                output.with_name(f".{output.stem}.manifest.json.staging"),
+            ]
+            for path in staging_paths:
+                path.write_text("interrupted batch", encoding="utf-8")
+            try:
+                result = write_dxf(
+                    minimal_plan(),
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assert_schema(result, "write_dxf")
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["details"]["recovered_staging_batch"])
+            self.assertTrue(output.is_file())
+            self.assertTrue(output.with_suffix(".preview.svg").is_file())
+            self.assertTrue(output.with_suffix(".manifest.json").is_file())
+            self.assertTrue(all(not path.exists() for path in staging_paths))
+
+    @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
+    def test_confirmed_write_never_removes_staging_directory(self) -> None:
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "unsafe_staging.dxf"
+            staging_directory = output.with_name(f".{output.name}.staging")
+            staging_directory.mkdir()
+            try:
+                result = write_dxf(
+                    minimal_plan(),
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assert_schema(result, "write_dxf")
+            self.assertFalse(result["ok"])
+            self.assertEqual("output_batch_exists", result["details"]["status"])
+            self.assertTrue(staging_directory.is_dir())
+            self.assertFalse(output.exists())
+
+    @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
     def test_preview_verification_failure_rolls_back_current_batch(self) -> None:
         bridge = autocad_dxf._bridge_instance
         original_root = bridge.OUTPUT_ROOT
