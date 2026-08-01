@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import math
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -859,15 +860,29 @@ class AutocadDxfBridge(BaseBridge):
         staging_present = [path for path in staging_paths if path.exists() or path.is_symlink()]
         recovered_staging_batch = False
         staging_is_recoverable = False
+        staging_is_regular = False
+        retry_after_seconds = 0
         if not final_present and staging_present:
             try:
-                recovery_cutoff = time.time() - self.STAGING_RECOVERY_MIN_AGE_SECONDS
-                staging_is_recoverable = all(
-                    path.is_file()
-                    and not path.is_symlink()
-                    and path.stat().st_mtime <= recovery_cutoff
-                    for path in staging_present
+                now = time.time()
+                staging_is_regular = all(
+                    path.is_file() and not path.is_symlink() for path in staging_present
                 )
+                if staging_is_regular:
+                    modification_times = [path.stat().st_mtime for path in staging_present]
+                    recovery_cutoff = now - self.STAGING_RECOVERY_MIN_AGE_SECONDS
+                    staging_is_recoverable = all(
+                        modified_at <= recovery_cutoff for modified_at in modification_times
+                    )
+                    if not staging_is_recoverable:
+                        retry_after_seconds = max(
+                            1,
+                            math.ceil(
+                                max(modification_times)
+                                + self.STAGING_RECOVERY_MIN_AGE_SECONDS
+                                - now
+                            ),
+                        )
             except OSError:
                 staging_is_recoverable = False
         if not final_present and staging_present and staging_is_recoverable:
@@ -888,6 +903,23 @@ class AutocadDxfBridge(BaseBridge):
                     warnings=["No final output was overwritten."],
                     next_steps=["Inspect the exact output batch and retry with a new filename."],
                 )
+        elif not final_present and staging_present and staging_is_regular:
+            return self._result(
+                ok=False,
+                action="write_dxf",
+                message="CAD generation may still be in progress; staging files were preserved.",
+                details={
+                    "dry_run": False,
+                    "state": "in_progress",
+                    "terminal": False,
+                    "result_ready": False,
+                    "status": "generation_in_progress",
+                    "retry_after_seconds": retry_after_seconds,
+                    "confirm_write": confirm_write,
+                },
+                warnings=["No active or recently updated staging file was removed."],
+                next_steps=["Retry after the suggested delay or use a unique .dxf filename."],
+            )
         elif final_present or staging_present:
             return self._result(
                 ok=False,

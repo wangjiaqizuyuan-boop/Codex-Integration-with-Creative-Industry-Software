@@ -454,7 +454,15 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
 
             self.assert_schema(result, "write_dxf")
             self.assertFalse(result["ok"])
-            self.assertEqual("output_batch_exists", result["details"]["status"])
+            self.assertEqual("generation_in_progress", result["details"]["status"])
+            self.assertEqual("in_progress", result["details"]["state"])
+            self.assertFalse(result["details"]["terminal"])
+            self.assertFalse(result["details"]["result_ready"])
+            self.assertGreaterEqual(result["details"]["retry_after_seconds"], 1)
+            self.assertLessEqual(
+                result["details"]["retry_after_seconds"],
+                bridge.STAGING_RECOVERY_MIN_AGE_SECONDS,
+            )
             self.assertEqual("active generation", staging_file.read_text(encoding="utf-8"))
             self.assertFalse(output.exists())
 
