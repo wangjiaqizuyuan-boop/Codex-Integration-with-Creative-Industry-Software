@@ -358,6 +358,9 @@ class AutocadDxfBridge(BaseBridge):
         ).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
 
+    def _generation_id(self, artifacts: list[dict[str, Any]]) -> str:
+        return f"sha256:{self._content_sha256({'artifacts': artifacts})}"
+
     def _annotate_svg_entities(self, text: str, document: Any) -> str:
         try:
             root = ET.fromstring(text)
@@ -667,6 +670,9 @@ class AutocadDxfBridge(BaseBridge):
             or manifest.get("artifacts") != expected_artifacts
         ):
             raise ValueError("generated manifest artifact digests do not match staged outputs")
+        generation_id = self._generation_id(expected_artifacts)
+        if manifest.get("generation_id") != generation_id:
+            raise ValueError("generated manifest ID does not match CAD artifacts")
         for artifact, artifact_path in zip(expected_artifacts, artifact_paths, strict=True):
             if (
                 not artifact_path.is_file()
@@ -695,6 +701,7 @@ class AutocadDxfBridge(BaseBridge):
         return {
             "verified": True,
             "schema_version": "1.0",
+            "generation_id": generation_id,
             "artifact_count": len(expected_artifacts),
             "artifact_digests_verified": True,
             "size_bytes": len(payload),
@@ -888,11 +895,13 @@ class AutocadDxfBridge(BaseBridge):
                 "size_bytes": staging_preview.stat().st_size,
                 "sha256": self._sha256(staging_preview),
             }
+            generation_id = self._generation_id([dxf_artifact, preview_artifact])
             manifest = {
                 "schema_version": "1.0",
                 "bridge": self.bridge_id,
                 "action": "write_dxf",
                 "state": "completed",
+                "generation_id": generation_id,
                 "artifact": dxf_artifact,
                 "artifacts": [dxf_artifact, preview_artifact],
                 "plan_summary": summary,
@@ -943,6 +952,7 @@ class AutocadDxfBridge(BaseBridge):
                     "terminal": True,
                     "result_ready": True,
                     "confirm_write": confirm_write,
+                    "generation_id": generation_id,
                     "artifacts": [dxf_artifact, preview_artifact, manifest_artifact],
                     "verification": verification,
                     "preview_verification": preview_verification,

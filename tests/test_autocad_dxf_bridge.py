@@ -216,6 +216,9 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             self.assertTrue(preview_path.is_file())
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             self.assertEqual("1.0", manifest["schema_version"])
+            generation_id = result["details"]["generation_id"]
+            self.assertRegex(generation_id, r"^sha256:[0-9a-f]{64}$")
+            self.assertEqual(generation_id, manifest["generation_id"])
             self.assertEqual(0, manifest["verification"]["audit_errors"])
             self.assertEqual(5, manifest["verification"]["entity_count"])
             self.assertTrue(manifest["verification"]["content_match"])
@@ -271,6 +274,7 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             manifest_verification = result["details"]["manifest_verification"]
             self.assertTrue(manifest_verification["verified"])
             self.assertTrue(manifest_verification["artifact_digests_verified"])
+            self.assertEqual(generation_id, manifest_verification["generation_id"])
             self.assertEqual("1.0", manifest_verification["schema_version"])
             self.assertEqual(2, manifest_verification["artifact_count"])
             self.assertEqual(
@@ -285,6 +289,7 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             self.assertTrue(delivery_verification["verified"])
             self.assertTrue(delivery_verification["artifact_digests_verified"])
             self.assertTrue(delivery_verification["promoted_artifacts_verified"])
+            self.assertEqual(generation_id, delivery_verification["generation_id"])
             self.assertEqual(
                 manifest_artifact["sha256"],
                 delivery_verification["sha256"],
@@ -578,6 +583,7 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             "bridge": bridge.bridge_id,
             "action": "write_dxf",
             "state": "completed",
+            "generation_id": bridge._generation_id(artifacts),
             "artifact": artifacts[0],
             "artifacts": [dict(item) for item in artifacts],
             "verification": {
@@ -635,6 +641,7 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                 "bridge": bridge.bridge_id,
                 "action": "write_dxf",
                 "state": "completed",
+                "generation_id": bridge._generation_id(artifacts),
                 "artifact": artifacts[0],
                 "artifacts": artifacts,
                 "verification": {
