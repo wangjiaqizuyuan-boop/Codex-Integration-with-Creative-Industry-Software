@@ -640,7 +640,7 @@ class AutocadDxfBridge(BaseBridge):
         manifest_path: Path,
         *,
         expected_artifacts: list[dict[str, Any]],
-        staged_artifact_paths: list[Path],
+        artifact_paths: list[Path],
         expected_content_sha256: str,
         expected_mapping_sha256: str,
     ) -> dict[str, Any]:
@@ -662,19 +662,19 @@ class AutocadDxfBridge(BaseBridge):
             raise ValueError("generated manifest identity does not match this CAD batch")
         if (
             len(expected_artifacts) != 2
-            or len(staged_artifact_paths) != len(expected_artifacts)
+            or len(artifact_paths) != len(expected_artifacts)
             or manifest.get("artifact") != expected_artifacts[0]
             or manifest.get("artifacts") != expected_artifacts
         ):
             raise ValueError("generated manifest artifact digests do not match staged outputs")
-        for artifact, staged_path in zip(expected_artifacts, staged_artifact_paths, strict=True):
+        for artifact, artifact_path in zip(expected_artifacts, artifact_paths, strict=True):
             if (
-                not staged_path.is_file()
-                or staged_path.is_symlink()
-                or staged_path.stat().st_size != artifact.get("size_bytes")
-                or self._sha256(staged_path) != artifact.get("sha256")
+                not artifact_path.is_file()
+                or artifact_path.is_symlink()
+                or artifact_path.stat().st_size != artifact.get("size_bytes")
+                or self._sha256(artifact_path) != artifact.get("sha256")
             ):
-                raise ValueError("staged CAD artifact bytes do not match generated manifest")
+                raise ValueError("CAD artifact bytes do not match generated manifest")
 
         verification = manifest.get("verification")
         if (
@@ -906,7 +906,7 @@ class AutocadDxfBridge(BaseBridge):
             manifest_verification = self._verify_generation_manifest(
                 staging_manifest,
                 expected_artifacts=[dxf_artifact, preview_artifact],
-                staged_artifact_paths=[staging_dxf, staging_preview],
+                artifact_paths=[staging_dxf, staging_preview],
                 expected_content_sha256=verification["content_sha256"],
                 expected_mapping_sha256=preview_verification["entity_mapping_sha256"],
             )
@@ -918,6 +918,14 @@ class AutocadDxfBridge(BaseBridge):
             staging_manifest.replace(manifest_path)
             promoted_manifest = True
 
+            delivery_verification = self._verify_generation_manifest(
+                manifest_path,
+                expected_artifacts=[dxf_artifact, preview_artifact],
+                artifact_paths=[out_path, preview_path],
+                expected_content_sha256=verification["content_sha256"],
+                expected_mapping_sha256=preview_verification["entity_mapping_sha256"],
+            )
+            delivery_verification["promoted_artifacts_verified"] = True
             manifest_artifact = {
                 "role": "generation_manifest",
                 "relative_path": manifest_path.relative_to(self.OUTPUT_ROOT.resolve()).as_posix(),
@@ -939,6 +947,7 @@ class AutocadDxfBridge(BaseBridge):
                     "verification": verification,
                     "preview_verification": preview_verification,
                     "manifest_verification": manifest_verification,
+                    "delivery_verification": delivery_verification,
                     "summary": summary,
                 },
             )

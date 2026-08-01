@@ -281,6 +281,14 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                 manifest_artifact["sha256"],
                 manifest_verification["sha256"],
             )
+            delivery_verification = result["details"]["delivery_verification"]
+            self.assertTrue(delivery_verification["verified"])
+            self.assertTrue(delivery_verification["artifact_digests_verified"])
+            self.assertTrue(delivery_verification["promoted_artifacts_verified"])
+            self.assertEqual(
+                manifest_artifact["sha256"],
+                delivery_verification["sha256"],
+            )
             self.assertIn("<svg", preview_path.read_text(encoding="utf-8"))
             preview_root = ET.fromstring(preview_path.read_text(encoding="utf-8"))
             preview_paths = [
@@ -412,12 +420,12 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                 _: Path,
                 *,
                 expected_artifacts: list[dict],
-                staged_artifact_paths: list[Path],
+                artifact_paths: list[Path],
                 expected_content_sha256: str,
                 expected_mapping_sha256: str,
             ) -> dict:
                 self.assertEqual(2, len(expected_artifacts))
-                self.assertEqual(2, len(staged_artifact_paths))
+                self.assertEqual(2, len(artifact_paths))
                 self.assertRegex(expected_content_sha256, r"^[0-9a-f]{64}$")
                 self.assertRegex(expected_mapping_sha256, r"^[0-9a-f]{64}$")
                 raise ValueError("simulated manifest verification failure")
@@ -434,6 +442,58 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                 bridge._verify_generation_manifest = original_verify
                 bridge.OUTPUT_ROOT = original_root
 
+            self.assert_schema(result, "write_dxf")
+            self.assertFalse(result["ok"])
+            self.assertEqual("generation_failed", result["details"]["status"])
+            self.assertFalse(output.exists())
+            self.assertFalse(output.with_suffix(".preview.svg").exists())
+            self.assertFalse(output.with_suffix(".manifest.json").exists())
+            self.assertEqual([], list(Path(tmp).glob(".*.staging")))
+
+    @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
+    def test_post_promotion_verification_failure_rolls_back_delivered_batch(self) -> None:
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        original_verify = bridge._verify_generation_manifest
+        verification_calls = 0
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "rollback_delivered_batch.dxf"
+
+            def fail_after_promotion(
+                manifest_path: Path,
+                *,
+                expected_artifacts: list[dict],
+                artifact_paths: list[Path],
+                expected_content_sha256: str,
+                expected_mapping_sha256: str,
+            ) -> dict:
+                nonlocal verification_calls
+                verification_calls += 1
+                verified = original_verify(
+                    manifest_path,
+                    expected_artifacts=expected_artifacts,
+                    artifact_paths=artifact_paths,
+                    expected_content_sha256=expected_content_sha256,
+                    expected_mapping_sha256=expected_mapping_sha256,
+                )
+                if verification_calls == 2:
+                    raise ValueError("simulated promoted batch verification failure")
+                return verified
+
+            bridge._verify_generation_manifest = fail_after_promotion
+            try:
+                result = write_dxf(
+                    minimal_plan(),
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                bridge._verify_generation_manifest = original_verify
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assertEqual(2, verification_calls)
             self.assert_schema(result, "write_dxf")
             self.assertFalse(result["ok"])
             self.assertEqual("generation_failed", result["details"]["status"])
@@ -539,7 +599,7 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                 bridge._verify_generation_manifest(
                     manifest_path,
                     expected_artifacts=artifacts,
-                    staged_artifact_paths=[
+                    artifact_paths=[
                         Path(tmp) / "drawing.dxf",
                         Path(tmp) / "drawing.preview.svg",
                     ],
@@ -595,7 +655,7 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                 bridge._verify_generation_manifest(
                     manifest_path,
                     expected_artifacts=artifacts,
-                    staged_artifact_paths=[dxf_path, preview_path],
+                    artifact_paths=[dxf_path, preview_path],
                     expected_content_sha256="c" * 64,
                     expected_mapping_sha256="d" * 64,
                 )
