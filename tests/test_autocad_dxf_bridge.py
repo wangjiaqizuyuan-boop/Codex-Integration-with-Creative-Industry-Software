@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
+import time
 import unittest
 import xml.etree.ElementTree as ET
 from importlib.util import find_spec
@@ -387,8 +389,10 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                 output.with_name(f".{output.stem}.preview.svg.staging"),
                 output.with_name(f".{output.stem}.manifest.json.staging"),
             ]
+            stale_time = time.time() - bridge.STAGING_RECOVERY_MIN_AGE_SECONDS - 1
             for path in staging_paths:
                 path.write_text("interrupted batch", encoding="utf-8")
+                os.utime(path, (stale_time, stale_time))
             try:
                 result = write_dxf(
                     minimal_plan(),
@@ -406,6 +410,31 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             self.assertTrue(output.with_suffix(".preview.svg").is_file())
             self.assertTrue(output.with_suffix(".manifest.json").is_file())
             self.assertTrue(all(not path.exists() for path in staging_paths))
+
+    @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
+    def test_confirmed_write_never_removes_fresh_staging_file(self) -> None:
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "active_staging.dxf"
+            staging_file = output.with_name(f".{output.name}.staging")
+            staging_file.write_text("active generation", encoding="utf-8")
+            try:
+                result = write_dxf(
+                    minimal_plan(),
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assert_schema(result, "write_dxf")
+            self.assertFalse(result["ok"])
+            self.assertEqual("output_batch_exists", result["details"]["status"])
+            self.assertEqual("active generation", staging_file.read_text(encoding="utf-8"))
+            self.assertFalse(output.exists())
 
     @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
     def test_confirmed_write_never_removes_staging_directory(self) -> None:

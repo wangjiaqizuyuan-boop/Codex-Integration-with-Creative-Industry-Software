@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import re
+import time
 import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
@@ -21,6 +22,7 @@ class AutocadDxfBridge(BaseBridge):
     BRIDGE_ID = "autocad_dxf"
     REPO_ROOT = Path(__file__).resolve().parents[2]
     OUTPUT_ROOT = REPO_ROOT / "examples" / "cad" / "output"
+    STAGING_RECOVERY_MIN_AGE_SECONDS = 15 * 60
 
     @property
     def bridge_id(self) -> str:
@@ -852,11 +854,19 @@ class AutocadDxfBridge(BaseBridge):
         final_present = [path for path in final_paths if path.exists() or path.is_symlink()]
         staging_present = [path for path in staging_paths if path.exists() or path.is_symlink()]
         recovered_staging_batch = False
-        if (
-            not final_present
-            and staging_present
-            and all(path.is_file() and not path.is_symlink() for path in staging_present)
-        ):
+        staging_is_recoverable = False
+        if not final_present and staging_present:
+            try:
+                recovery_cutoff = time.time() - self.STAGING_RECOVERY_MIN_AGE_SECONDS
+                staging_is_recoverable = all(
+                    path.is_file()
+                    and not path.is_symlink()
+                    and path.stat().st_mtime <= recovery_cutoff
+                    for path in staging_present
+                )
+            except OSError:
+                staging_is_recoverable = False
+        if not final_present and staging_present and staging_is_recoverable:
             try:
                 for path in staging_present:
                     path.unlink()
