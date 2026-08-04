@@ -42,8 +42,8 @@ def minimal_plan() -> dict:
     }
 
 
-def arc_plan() -> dict:
-    return {
+def arc_plan(*, clockwise: bool = False) -> dict:
+    plan = {
         "units": "mm",
         "layers": [{"name": "OUTLINE", "color": 7}],
         "entities": [
@@ -58,6 +58,9 @@ def arc_plan() -> dict:
         ],
         "output": "arc_demo.dxf",
     }
+    if clockwise:
+        plan["entities"][0]["clockwise"] = True
+    return plan
 
 
 class AutoCadDxfBridgeTests(unittest.TestCase):
@@ -134,6 +137,13 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
     def test_validate_cad_plan_rejects_ambiguous_arc_angles(self) -> None:
         plan = arc_plan()
         plan["entities"][0]["end_angle"] = 360
+        result = validate_cad_plan(plan)
+        self.assert_schema(result, "validate_cad_plan")
+        self.assertFalse(result["ok"])
+
+    def test_validate_cad_plan_rejects_non_boolean_arc_direction(self) -> None:
+        plan = arc_plan()
+        plan["entities"][0]["clockwise"] = "yes"
         result = validate_cad_plan(plan)
         self.assert_schema(result, "validate_cad_plan")
         self.assertFalse(result["ok"])
@@ -428,6 +438,57 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             ]
             self.assertEqual(1, len(preview_paths))
             self.assertEqual("ARC", preview_paths[0].get("data-dxf-type"))
+
+    @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
+    def test_confirmed_write_creates_verified_clockwise_arc(self) -> None:
+        import ezdxf
+
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        plan = arc_plan(clockwise=True)
+        plan["entities"][0]["start_angle"] = 30
+        plan["entities"][0]["end_angle"] = 300
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "clockwise_arc.dxf"
+            try:
+                result = write_dxf(
+                    plan,
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assert_schema(result, "write_dxf")
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["details"]["verification"]["content_match"])
+            self.assertEqual(0, result["details"]["verification"]["audit_errors"])
+            self.assertEqual(
+                {"ARC": 1},
+                result["details"]["preview_verification"]["entity_type_counts"],
+            )
+            self.assertTrue(result["details"]["delivery_verification"]["verified"])
+
+            document = ezdxf.readfile(output)
+            arc = next(iter(document.modelspace().query("ARC")))
+            self.assertAlmostEqual(300.0, arc.dxf.start_angle)
+            self.assertAlmostEqual(30.0, arc.dxf.end_angle)
+            self.assertAlmostEqual(
+                300.0,
+                (arc.start_point - arc.dxf.center).angle_deg % 360.0,
+            )
+            self.assertAlmostEqual(
+                30.0,
+                (arc.end_point - arc.dxf.center).angle_deg % 360.0,
+            )
+
+            manifest = json.loads(output.with_suffix(".manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                result["details"]["verification"]["content_sha256"],
+                manifest["verification"]["content_sha256"],
+            )
 
     @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
     def test_confirmed_write_never_overwrites_existing_batch(self) -> None:

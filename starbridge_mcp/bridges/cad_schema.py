@@ -165,6 +165,11 @@ def normalize_entity(entity: Any, index: int) -> tuple[dict[str, Any] | None, li
             errors.append(end_error)
         else:
             normalized["end_angle"] = end_angle
+        clockwise = entity.get("clockwise", False)
+        if not isinstance(clockwise, bool):
+            errors.append(f"entities[{index}].clockwise must be a boolean")
+        else:
+            normalized["clockwise"] = clockwise
         if (
             start_angle is not None
             and end_angle is not None

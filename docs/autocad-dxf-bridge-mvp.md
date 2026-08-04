@@ -35,7 +35,7 @@
 | `line` | `start`, `end`, `layer` |
 | `polyline` | `points`, `layer` |
 | `circle` | `center`, `radius`, `layer` |
-| `arc` | `center`, `radius`, `start_angle`, `end_angle`, `layer` |
+| `arc` | `center`, `radius`, `start_angle`, `end_angle`, `layer`；可选 `clockwise`，默认 `false` |
 | `rectangle` | `x`, `y`, `width`, `height`, `layer` |
 | `text` | `position`, `value`, `height`, `layer` |
 

@@ -300,12 +300,16 @@ class AutocadDxfBridge(BaseBridge):
                     radius=self._canonical_number(entity["radius"]),
                 )
             elif entity_type == "arc":
+                start_angle = entity["start_angle"]
+                end_angle = entity["end_angle"]
+                if entity.get("clockwise", False):
+                    start_angle, end_angle = end_angle, start_angle
                 canonical.update(
                     type="ARC",
                     center=self._canonical_point(entity["center"]),
                     radius=self._canonical_number(entity["radius"]),
-                    start_angle=self._canonical_number(entity["start_angle"]),
-                    end_angle=self._canonical_number(entity["end_angle"]),
+                    start_angle=self._canonical_number(start_angle),
+                    end_angle=self._canonical_number(end_angle),
                 )
             elif entity_type == "rectangle":
                 x = entity["x"]
@@ -496,6 +500,7 @@ class AutocadDxfBridge(BaseBridge):
                     entity["radius"],
                     entity["start_angle"],
                     entity["end_angle"],
+                    is_counter_clockwise=not entity.get("clockwise", False),
                     dxfattribs=attributes,
                 )
             elif entity_type == "rectangle":
@@ -789,6 +794,8 @@ class AutocadDxfBridge(BaseBridge):
             radius = entity["radius"]
             start_angle = entity["start_angle"]
             end_angle = entity["end_angle"]
+            if entity.get("clockwise", False):
+                start_angle, end_angle = end_angle, start_angle
             sweep = (end_angle - start_angle) % 360.0
             angles = [start_angle, end_angle]
             angles.extend(
