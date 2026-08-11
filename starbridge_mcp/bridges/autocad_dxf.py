@@ -319,8 +319,8 @@ class AutocadDxfBridge(BaseBridge):
                     center=self._canonical_point(entity["center"]),
                     major_axis=self._canonical_point(entity["major_axis"]),
                     ratio=self._canonical_number(entity["ratio"]),
-                    start_param=0.0,
-                    end_param=self._canonical_number(math.tau),
+                    start_param=self._canonical_number(entity["start_param"]),
+                    end_param=self._canonical_number(entity["end_param"]),
                     extrusion=[0.0, 0.0, 1.0],
                 )
             elif entity_type == "hatch":
@@ -556,6 +556,8 @@ class AutocadDxfBridge(BaseBridge):
                     entity["center"],
                     major_axis=entity["major_axis"],
                     ratio=entity["ratio"],
+                    start_param=entity["start_param"],
+                    end_param=entity["end_param"],
                     dxfattribs=attributes,
                 )
             elif entity_type == "hatch":
@@ -880,11 +882,28 @@ class AutocadDxfBridge(BaseBridge):
             center_x, center_y = entity["center"]
             major_x, major_y = entity["major_axis"]
             ratio = entity["ratio"]
-            extent_x = math.hypot(major_x, major_y * ratio)
-            extent_y = math.hypot(major_y, major_x * ratio)
+            start_param = entity["start_param"]
+            end_param = entity["end_param"]
+            is_full = start_param == 0.0 and end_param == math.tau
+            sweep = math.tau if is_full else (end_param - start_param) % math.tau
+            candidates = [start_param, end_param]
+            for cosine_coefficient, sine_coefficient in (
+                (major_x, -major_y * ratio),
+                (major_y, major_x * ratio),
+            ):
+                extremum = math.atan2(sine_coefficient, cosine_coefficient) % math.tau
+                candidates.extend((extremum, (extremum + math.pi) % math.tau))
+            params = [
+                param
+                for param in candidates
+                if is_full or (param - start_param) % math.tau <= sweep + 1e-12
+            ]
             return [
-                [center_x - extent_x, center_y - extent_y],
-                [center_x + extent_x, center_y + extent_y],
+                [
+                    center_x + major_x * math.cos(param) - major_y * ratio * math.sin(param),
+                    center_y + major_y * math.cos(param) + major_x * ratio * math.sin(param),
+                ]
+                for param in params
             ]
         if entity_type == "hatch":
             return list(entity["points"])

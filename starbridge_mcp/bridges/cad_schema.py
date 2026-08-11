@@ -57,6 +57,20 @@ def _angle(value: Any, field: str) -> tuple[float | None, str | None]:
     return number % 360.0, None
 
 
+def _ellipse_param(value: Any, field: str) -> tuple[float | None, str | None]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None, f"{field} must be a number"
+    if not math.isfinite(number) or not 0.0 <= number <= math.tau:
+        return None, f"{field} must be between 0 and 2*pi radians"
+    if math.isclose(number, 0.0, rel_tol=0.0, abs_tol=1e-9):
+        number = 0.0
+    elif math.isclose(number, math.tau, rel_tol=0.0, abs_tol=1e-9):
+        number = math.tau
+    return number, None
+
+
 def _validate_coordinate_range(point: list[float], field: str) -> str | None:
     if any(abs(value) > MAX_ABS_COORDINATE for value in point):
         return f"{field} is outside the safe coordinate range"
@@ -244,6 +258,25 @@ def normalize_entity(entity: Any, index: int) -> tuple[dict[str, Any] | None, li
                 errors.append(f"entities[{index}].ratio must be between 0.000001 and 1")
             else:
                 normalized["ratio"] = ratio
+        start_param, start_error = _ellipse_param(
+            entity.get("start_param", 0.0), f"entities[{index}].start_param"
+        )
+        end_param, end_error = _ellipse_param(
+            entity.get("end_param", math.tau), f"entities[{index}].end_param"
+        )
+        if start_error:
+            errors.append(start_error)
+        else:
+            normalized["start_param"] = start_param
+        if end_error:
+            errors.append(end_error)
+        else:
+            normalized["end_param"] = end_param
+        if start_param is not None and end_param is not None:
+            is_full = start_param == 0.0 and end_param == math.tau
+            sweep = (end_param - start_param) % math.tau
+            if not is_full and math.isclose(sweep, 0.0, rel_tol=0.0, abs_tol=1e-9):
+                errors.append(f"entities[{index}] ellipse params must describe a non-zero sweep")
     elif entity_type == "rectangle":
         for field in ("x", "y"):
             try:
