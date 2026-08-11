@@ -84,6 +84,7 @@ class AutocadDxfBridge(BaseBridge):
                     "polyline",
                     "circle",
                     "arc",
+                    "ellipse",
                     "rectangle",
                     "hatch",
                     "text",
@@ -312,6 +313,16 @@ class AutocadDxfBridge(BaseBridge):
                     start_angle=self._canonical_number(start_angle),
                     end_angle=self._canonical_number(end_angle),
                 )
+            elif entity_type == "ellipse":
+                canonical.update(
+                    type="ELLIPSE",
+                    center=self._canonical_point(entity["center"]),
+                    major_axis=self._canonical_point(entity["major_axis"]),
+                    ratio=self._canonical_number(entity["ratio"]),
+                    start_param=0.0,
+                    end_param=self._canonical_number(math.tau),
+                    extrusion=[0.0, 0.0, 1.0],
+                )
             elif entity_type == "hatch":
                 canonical.update(
                     type="HATCH",
@@ -400,6 +411,19 @@ class AutocadDxfBridge(BaseBridge):
                     radius=self._canonical_number(entity.dxf.radius),
                     start_angle=self._canonical_number(entity.dxf.start_angle),
                     end_angle=self._canonical_number(entity.dxf.end_angle),
+                )
+            elif entity_type == "ELLIPSE":
+                canonical.update(
+                    center=self._canonical_point(entity.dxf.center),
+                    major_axis=self._canonical_point(entity.dxf.major_axis),
+                    ratio=self._canonical_number(entity.dxf.ratio),
+                    start_param=self._canonical_number(entity.dxf.start_param),
+                    end_param=self._canonical_number(entity.dxf.end_param),
+                    extrusion=[
+                        self._canonical_number(entity.dxf.extrusion.x),
+                        self._canonical_number(entity.dxf.extrusion.y),
+                        self._canonical_number(entity.dxf.extrusion.z),
+                    ],
                 )
             elif entity_type == "HATCH":
                 if len(entity.paths) != 1:
@@ -525,6 +549,13 @@ class AutocadDxfBridge(BaseBridge):
                     entity["start_angle"],
                     entity["end_angle"],
                     is_counter_clockwise=not entity.get("clockwise", False),
+                    dxfattribs=attributes,
+                )
+            elif entity_type == "ellipse":
+                modelspace.add_ellipse(
+                    entity["center"],
+                    major_axis=entity["major_axis"],
+                    ratio=entity["ratio"],
                     dxfattribs=attributes,
                 )
             elif entity_type == "hatch":
@@ -656,6 +687,7 @@ class AutocadDxfBridge(BaseBridge):
                     "LWPOLYLINE",
                     "CIRCLE",
                     "ARC",
+                    "ELLIPSE",
                     "HATCH",
                     "TEXT",
                 }:
@@ -843,6 +875,16 @@ class AutocadDxfBridge(BaseBridge):
                     y + radius * math.sin(math.radians(angle)),
                 ]
                 for angle in angles
+            ]
+        if entity_type == "ellipse":
+            center_x, center_y = entity["center"]
+            major_x, major_y = entity["major_axis"]
+            ratio = entity["ratio"]
+            extent_x = math.hypot(major_x, major_y * ratio)
+            extent_y = math.hypot(major_y, major_x * ratio)
+            return [
+                [center_x - extent_x, center_y - extent_y],
+                [center_x + extent_x, center_y + extent_y],
             ]
         if entity_type == "hatch":
             return list(entity["points"])

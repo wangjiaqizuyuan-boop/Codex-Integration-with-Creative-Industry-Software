@@ -6,7 +6,16 @@ from pathlib import PureWindowsPath
 from typing import Any
 
 SUPPORTED_UNITS = {"mm", "cm", "m", "inch"}
-SUPPORTED_ENTITY_TYPES = {"line", "polyline", "circle", "arc", "rectangle", "hatch", "text"}
+SUPPORTED_ENTITY_TYPES = {
+    "line",
+    "polyline",
+    "circle",
+    "arc",
+    "ellipse",
+    "rectangle",
+    "hatch",
+    "text",
+}
 MAX_ABS_COORDINATE = 1_000_000
 MAX_ENTITY_COUNT = 1_000
 DEFAULT_LAYERS = [
@@ -211,6 +220,30 @@ def normalize_entity(entity: Any, index: int) -> tuple[dict[str, Any] | None, li
             and math.isclose(start_angle, end_angle, rel_tol=0.0, abs_tol=1e-9)
         ):
             errors.append(f"entities[{index}] arc angles must describe a non-zero sweep")
+    elif entity_type == "ellipse":
+        for field in ("center", "major_axis"):
+            point, error = _point2(entity.get(field), f"entities[{index}].{field}")
+            if error:
+                errors.append(error)
+            else:
+                range_error = _validate_coordinate_range(point, f"entities[{index}].{field}")
+                if range_error:
+                    errors.append(range_error)
+                normalized[field] = point
+        major_axis = normalized.get("major_axis")
+        if major_axis is not None and math.isclose(
+            math.hypot(*major_axis), 0.0, rel_tol=0.0, abs_tol=1e-9
+        ):
+            errors.append(f"entities[{index}].major_axis must be non-zero")
+        try:
+            ratio = float(entity.get("ratio"))
+        except (TypeError, ValueError):
+            errors.append(f"entities[{index}].ratio must be a number")
+        else:
+            if not math.isfinite(ratio) or not 0.000001 <= ratio <= 1.0:
+                errors.append(f"entities[{index}].ratio must be between 0.000001 and 1")
+            else:
+                normalized["ratio"] = ratio
     elif entity_type == "rectangle":
         for field in ("x", "y"):
             try:

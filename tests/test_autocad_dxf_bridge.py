@@ -78,6 +78,23 @@ def hatch_plan() -> dict:
     }
 
 
+def ellipse_plan() -> dict:
+    return {
+        "units": "mm",
+        "layers": [{"name": "OUTLINE", "color": 7}],
+        "entities": [
+            {
+                "type": "ellipse",
+                "layer": "OUTLINE",
+                "center": [300, 250],
+                "major_axis": [180, 90],
+                "ratio": 0.4,
+            }
+        ],
+        "output": "ellipse_demo.dxf",
+    }
+
+
 class AutoCadDxfBridgeTests(unittest.TestCase):
     def assert_schema(self, result: dict, action: str) -> None:
         self.assertEqual(
@@ -186,6 +203,36 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             with self.subTest(points=points):
                 plan = hatch_plan()
                 plan["entities"][0]["points"] = points
+                result = validate_cad_plan(plan)
+                self.assert_schema(result, "validate_cad_plan")
+                self.assertFalse(result["ok"])
+
+    def test_validate_and_summarize_full_ellipse_plan(self) -> None:
+        validation = validate_cad_plan(ellipse_plan())
+        self.assert_schema(validation, "validate_cad_plan")
+        self.assertTrue(validation["ok"])
+
+        summary = summarize_plan(ellipse_plan())
+        self.assert_schema(summary, "summarize_plan")
+        self.assertTrue(summary["ok"])
+        self.assertEqual({"ellipse": 1}, summary["details"]["entity_types"])
+        bbox = summary["details"]["bbox"]
+        self.assertAlmostEqual(116.43529751, bbox["min_x"])
+        self.assertAlmostEqual(134.74376373, bbox["min_y"])
+        self.assertAlmostEqual(483.56470249, bbox["max_x"])
+        self.assertAlmostEqual(365.25623627, bbox["max_y"])
+
+    def test_validate_cad_plan_rejects_invalid_ellipses(self) -> None:
+        invalid_fields = (
+            ("major_axis", [0, 0]),
+            ("ratio", 0),
+            ("ratio", 1.1),
+            ("ratio", float("inf")),
+        )
+        for field, value in invalid_fields:
+            with self.subTest(field=field, value=value):
+                plan = ellipse_plan()
+                plan["entities"][0][field] = value
                 result = validate_cad_plan(plan)
                 self.assert_schema(result, "validate_cad_plan")
                 self.assertFalse(result["ok"])
@@ -589,6 +636,64 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             ]
             self.assertEqual(1, len(preview_paths))
             self.assertEqual("HATCH", preview_paths[0].get("data-dxf-type"))
+
+    @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
+    def test_confirmed_write_creates_verified_full_ellipse_delivery(self) -> None:
+        import math
+
+        import ezdxf
+
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "verified_ellipse.dxf"
+            try:
+                result = write_dxf(
+                    ellipse_plan(),
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assert_schema(result, "write_dxf")
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["details"]["verification"]["content_match"])
+            self.assertEqual(0, result["details"]["verification"]["audit_errors"])
+            self.assertEqual(
+                {"ELLIPSE": 1},
+                result["details"]["preview_verification"]["entity_type_counts"],
+            )
+            self.assertTrue(result["details"]["delivery_verification"]["verified"])
+
+            document = ezdxf.readfile(output)
+            ellipse = next(iter(document.modelspace().query("ELLIPSE")))
+            self.assertEqual((300.0, 250.0), (ellipse.dxf.center.x, ellipse.dxf.center.y))
+            self.assertEqual(
+                (180.0, 90.0),
+                (ellipse.dxf.major_axis.x, ellipse.dxf.major_axis.y),
+            )
+            self.assertAlmostEqual(0.4, ellipse.dxf.ratio)
+            self.assertAlmostEqual(0.0, ellipse.dxf.start_param)
+            self.assertAlmostEqual(math.tau, ellipse.dxf.end_param)
+
+            manifest = json.loads(output.with_suffix(".manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                result["details"]["verification"]["content_sha256"],
+                manifest["verification"]["content_sha256"],
+            )
+            preview_root = ET.fromstring(
+                output.with_suffix(".preview.svg").read_text(encoding="utf-8")
+            )
+            preview_paths = [
+                element
+                for element in preview_root.iter()
+                if element.tag.rsplit("}", 1)[-1] == "path"
+            ]
+            self.assertEqual(1, len(preview_paths))
+            self.assertEqual("ELLIPSE", preview_paths[0].get("data-dxf-type"))
 
     @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
     def test_confirmed_write_never_overwrites_existing_batch(self) -> None:
