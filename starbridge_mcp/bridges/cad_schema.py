@@ -6,7 +6,7 @@ from pathlib import PureWindowsPath
 from typing import Any
 
 SUPPORTED_UNITS = {"mm", "cm", "m", "inch"}
-SUPPORTED_ENTITY_TYPES = {"line", "polyline", "circle", "arc", "rectangle", "text"}
+SUPPORTED_ENTITY_TYPES = {"line", "polyline", "circle", "arc", "rectangle", "hatch", "text"}
 MAX_ABS_COORDINATE = 1_000_000
 MAX_ENTITY_COUNT = 1_000
 DEFAULT_LAYERS = [
@@ -20,9 +20,12 @@ def _point2(value: Any, field: str) -> tuple[list[float] | None, str | None]:
     if not isinstance(value, (list, tuple)) or len(value) < 2:
         return None, f"{field} must be [x, y]"
     try:
-        return [float(value[0]), float(value[1])], None
+        point = [float(value[0]), float(value[1])]
     except (TypeError, ValueError):
         return None, f"{field} must contain numeric x/y values"
+    if not all(math.isfinite(coordinate) for coordinate in point):
+        return None, f"{field} must contain finite x/y values"
+    return point, None
 
 
 def _positive_number(value: Any, field: str) -> tuple[float | None, str | None]:
@@ -125,6 +128,38 @@ def normalize_entity(entity: Any, index: int) -> tuple[dict[str, Any] | None, li
                     normalized_points.append(point)
             normalized["points"] = normalized_points
         normalized["closed"] = bool(entity.get("closed", False))
+    elif entity_type == "hatch":
+        points = entity.get("points")
+        if not isinstance(points, list) or len(points) < 3:
+            errors.append(f"entities[{index}].points must contain at least 3 points")
+        else:
+            normalized_points = []
+            for point_index, raw_point in enumerate(points):
+                point, error = _point2(raw_point, f"entities[{index}].points[{point_index}]")
+                if error:
+                    errors.append(error)
+                else:
+                    range_error = _validate_coordinate_range(
+                        point, f"entities[{index}].points[{point_index}]"
+                    )
+                    if range_error:
+                        errors.append(range_error)
+                    normalized_points.append(point)
+            if len(normalized_points) > 1 and normalized_points[0] == normalized_points[-1]:
+                normalized_points.pop()
+            if len({tuple(point) for point in normalized_points}) < 3:
+                errors.append(f"entities[{index}].points must contain at least 3 unique points")
+            elif not errors:
+                twice_area = sum(
+                    start[0] * end[1] - end[0] * start[1]
+                    for start, end in zip(
+                        normalized_points,
+                        normalized_points[1:] + normalized_points[:1],
+                    )
+                )
+                if math.isclose(twice_area, 0.0, rel_tol=0.0, abs_tol=1e-9):
+                    errors.append(f"entities[{index}].points must enclose a non-zero area")
+            normalized["points"] = normalized_points
     elif entity_type == "circle":
         point, error = _point2(entity.get("center"), f"entities[{index}].center")
         if error:

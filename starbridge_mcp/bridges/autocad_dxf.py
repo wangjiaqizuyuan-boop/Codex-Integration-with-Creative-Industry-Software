@@ -85,6 +85,7 @@ class AutocadDxfBridge(BaseBridge):
                     "circle",
                     "arc",
                     "rectangle",
+                    "hatch",
                     "text",
                 ],
             },
@@ -311,6 +312,14 @@ class AutocadDxfBridge(BaseBridge):
                     start_angle=self._canonical_number(start_angle),
                     end_angle=self._canonical_number(end_angle),
                 )
+            elif entity_type == "hatch":
+                canonical.update(
+                    type="HATCH",
+                    points=[self._canonical_point(point) for point in entity["points"]],
+                    closed=True,
+                    solid_fill=True,
+                    pattern_name="SOLID",
+                )
             elif entity_type == "rectangle":
                 x = entity["x"]
                 y = entity["y"]
@@ -391,6 +400,21 @@ class AutocadDxfBridge(BaseBridge):
                     radius=self._canonical_number(entity.dxf.radius),
                     start_angle=self._canonical_number(entity.dxf.start_angle),
                     end_angle=self._canonical_number(entity.dxf.end_angle),
+                )
+            elif entity_type == "HATCH":
+                if len(entity.paths) != 1:
+                    raise ValueError("generated HATCH must contain exactly one boundary path")
+                boundary = entity.paths[0]
+                if not boundary.is_closed:
+                    raise ValueError("generated HATCH boundary is not closed")
+                vertices = list(boundary.vertices)
+                if any(not math.isclose(float(vertex[2]), 0.0) for vertex in vertices):
+                    raise ValueError("generated HATCH boundary contains unsupported bulges")
+                canonical.update(
+                    points=[self._canonical_point(vertex) for vertex in vertices],
+                    closed=True,
+                    solid_fill=bool(entity.dxf.solid_fill),
+                    pattern_name=str(entity.dxf.pattern_name).upper(),
                 )
             elif entity_type == "TEXT":
                 canonical.update(
@@ -503,6 +527,9 @@ class AutocadDxfBridge(BaseBridge):
                     is_counter_clockwise=not entity.get("clockwise", False),
                     dxfattribs=attributes,
                 )
+            elif entity_type == "hatch":
+                hatch = modelspace.add_hatch(color=7, dxfattribs=attributes)
+                hatch.paths.add_polyline_path(entity["points"], is_closed=True)
             elif entity_type == "rectangle":
                 x = entity["x"]
                 y = entity["y"]
@@ -624,7 +651,14 @@ class AutocadDxfBridge(BaseBridge):
                     or any(ord(character) < 32 for character in layer_name)
                 ):
                     raise ValueError("generated SVG path has invalid DXF layer metadata")
-                if entity_type not in {"LINE", "LWPOLYLINE", "CIRCLE", "ARC", "TEXT"}:
+                if entity_type not in {
+                    "LINE",
+                    "LWPOLYLINE",
+                    "CIRCLE",
+                    "ARC",
+                    "HATCH",
+                    "TEXT",
+                }:
                     raise ValueError("generated SVG path has invalid DXF type metadata")
                 entity_ids.append(entity_id)
                 entity_metadata.append({"id": entity_id, "layer": layer_name, "type": entity_type})
@@ -810,6 +844,8 @@ class AutocadDxfBridge(BaseBridge):
                 ]
                 for angle in angles
             ]
+        if entity_type == "hatch":
+            return list(entity["points"])
         if entity_type == "rectangle":
             x = entity["x"]
             y = entity["y"]

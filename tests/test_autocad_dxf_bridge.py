@@ -63,6 +63,21 @@ def arc_plan(*, clockwise: bool = False) -> dict:
     return plan
 
 
+def hatch_plan() -> dict:
+    return {
+        "units": "mm",
+        "layers": [{"name": "FILL", "color": 7}],
+        "entities": [
+            {
+                "type": "hatch",
+                "layer": "FILL",
+                "points": [[100, 100], [500, 100], [500, 300], [100, 300]],
+            }
+        ],
+        "output": "hatch_demo.dxf",
+    }
+
+
 class AutoCadDxfBridgeTests(unittest.TestCase):
     def assert_schema(self, result: dict, action: str) -> None:
         self.assertEqual(
@@ -147,6 +162,33 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
         result = validate_cad_plan(plan)
         self.assert_schema(result, "validate_cad_plan")
         self.assertFalse(result["ok"])
+
+    def test_validate_and_summarize_solid_hatch_plan(self) -> None:
+        validation = validate_cad_plan(hatch_plan())
+        self.assert_schema(validation, "validate_cad_plan")
+        self.assertTrue(validation["ok"])
+
+        summary = summarize_plan(hatch_plan())
+        self.assert_schema(summary, "summarize_plan")
+        self.assertTrue(summary["ok"])
+        self.assertEqual({"hatch": 1}, summary["details"]["entity_types"])
+        self.assertEqual(
+            {"min_x": 100.0, "min_y": 100.0, "max_x": 500.0, "max_y": 300.0},
+            summary["details"]["bbox"],
+        )
+
+    def test_validate_cad_plan_rejects_invalid_hatch_boundaries(self) -> None:
+        for points in (
+            [[0, 0], [10, 0]],
+            [[0, 0], [10, 0], [20, 0]],
+            [[0, 0], [10, 0], [10, float("inf")]],
+        ):
+            with self.subTest(points=points):
+                plan = hatch_plan()
+                plan["entities"][0]["points"] = points
+                result = validate_cad_plan(plan)
+                self.assert_schema(result, "validate_cad_plan")
+                self.assertFalse(result["ok"])
 
     def test_create_dxf_plan_accepts_prompt_and_spec(self) -> None:
         prompt_result = create_dxf_plan("生成一个矩形边框和标题文字")
@@ -489,6 +531,64 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
                 result["details"]["verification"]["content_sha256"],
                 manifest["verification"]["content_sha256"],
             )
+
+    @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
+    def test_confirmed_write_creates_verified_solid_hatch_delivery(self) -> None:
+        import ezdxf
+
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "verified_hatch.dxf"
+            try:
+                result = write_dxf(
+                    hatch_plan(),
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assert_schema(result, "write_dxf")
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["details"]["verification"]["content_match"])
+            self.assertEqual(0, result["details"]["verification"]["audit_errors"])
+            self.assertEqual(
+                {"HATCH": 1},
+                result["details"]["preview_verification"]["entity_type_counts"],
+            )
+            self.assertTrue(result["details"]["delivery_verification"]["verified"])
+
+            document = ezdxf.readfile(output)
+            hatch = next(iter(document.modelspace().query("HATCH")))
+            self.assertEqual(1, hatch.dxf.solid_fill)
+            self.assertEqual("SOLID", hatch.dxf.pattern_name)
+            self.assertEqual(1, len(hatch.paths))
+            boundary = hatch.paths[0]
+            self.assertTrue(boundary.is_closed)
+            self.assertEqual(
+                [(100.0, 100.0), (500.0, 100.0), (500.0, 300.0), (100.0, 300.0)],
+                [(float(vertex[0]), float(vertex[1])) for vertex in boundary.vertices],
+            )
+            self.assertTrue(all(float(vertex[2]) == 0.0 for vertex in boundary.vertices))
+
+            manifest = json.loads(output.with_suffix(".manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                result["details"]["verification"]["content_sha256"],
+                manifest["verification"]["content_sha256"],
+            )
+            preview_root = ET.fromstring(
+                output.with_suffix(".preview.svg").read_text(encoding="utf-8")
+            )
+            preview_paths = [
+                element
+                for element in preview_root.iter()
+                if element.tag.rsplit("}", 1)[-1] == "path"
+            ]
+            self.assertEqual(1, len(preview_paths))
+            self.assertEqual("HATCH", preview_paths[0].get("data-dxf-type"))
 
     @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
     def test_confirmed_write_never_overwrites_existing_batch(self) -> None:
