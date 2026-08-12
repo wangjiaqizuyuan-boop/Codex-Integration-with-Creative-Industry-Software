@@ -101,6 +101,21 @@ def ellipse_plan(*, start_param: float | None = None, end_param: float | None = 
     return plan
 
 
+def spline_plan() -> dict:
+    return {
+        "units": "mm",
+        "layers": [{"name": "CURVE", "color": 7}],
+        "entities": [
+            {
+                "type": "spline",
+                "layer": "CURVE",
+                "control_points": [[0, 0], [100, 250], [300, -150], [450, 100]],
+            }
+        ],
+        "output": "spline_demo.dxf",
+    }
+
+
 class AutoCadDxfBridgeTests(unittest.TestCase):
     def assert_schema(self, result: dict, action: str) -> None:
         self.assertEqual(
@@ -270,6 +285,35 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             with self.subTest(params=params):
                 plan = ellipse_plan()
                 plan["entities"][0].update(params)
+                result = validate_cad_plan(plan)
+                self.assert_schema(result, "validate_cad_plan")
+                self.assertFalse(result["ok"])
+
+    def test_validate_and_summarize_cubic_spline_plan(self) -> None:
+        validation = validate_cad_plan(spline_plan())
+        self.assert_schema(validation, "validate_cad_plan")
+        self.assertTrue(validation["ok"])
+
+        summary = summarize_plan(spline_plan())
+        self.assert_schema(summary, "summarize_plan")
+        self.assertTrue(summary["ok"])
+        self.assertEqual({"spline": 1}, summary["details"]["entity_types"])
+        bbox = summary["details"]["bbox"]
+        self.assertAlmostEqual(0.0, bbox["min_x"])
+        self.assertAlmostEqual(0.0, bbox["min_y"])
+        self.assertAlmostEqual(450.0, bbox["max_x"])
+        self.assertAlmostEqual(100.0, bbox["max_y"])
+
+    def test_validate_cad_plan_rejects_invalid_cubic_splines(self) -> None:
+        invalid_control_points = (
+            [[0, 0], [100, 100], [200, 0]],
+            [[0, 0], [0, 0], [0, 0], [0, 0]],
+            [[0, 0], [100, 100], [200, float("inf")], [300, 0]],
+        )
+        for control_points in invalid_control_points:
+            with self.subTest(control_points=control_points):
+                plan = spline_plan()
+                plan["entities"][0]["control_points"] = control_points
                 result = validate_cad_plan(plan)
                 self.assert_schema(result, "validate_cad_plan")
                 self.assertFalse(result["ok"])
@@ -780,6 +824,67 @@ class AutoCadDxfBridgeTests(unittest.TestCase):
             ]
             self.assertEqual(1, len(preview_paths))
             self.assertEqual("ELLIPSE", preview_paths[0].get("data-dxf-type"))
+
+    @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
+    def test_confirmed_write_creates_verified_cubic_spline(self) -> None:
+        import ezdxf
+
+        bridge = autocad_dxf._bridge_instance
+        original_root = bridge.OUTPUT_ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            bridge.OUTPUT_ROOT = Path(tmp)
+            output = Path(tmp) / "verified_spline.dxf"
+            try:
+                result = write_dxf(
+                    spline_plan(),
+                    output,
+                    dry_run=False,
+                    confirm_write=True,
+                )
+            finally:
+                bridge.OUTPUT_ROOT = original_root
+
+            self.assert_schema(result, "write_dxf")
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["details"]["verification"]["content_match"])
+            self.assertEqual(0, result["details"]["verification"]["audit_errors"])
+            self.assertEqual(
+                {"SPLINE": 1},
+                result["details"]["preview_verification"]["entity_type_counts"],
+            )
+            self.assertTrue(result["details"]["delivery_verification"]["verified"])
+
+            document = ezdxf.readfile(output)
+            spline = next(iter(document.modelspace().query("SPLINE")))
+            self.assertEqual(3, spline.dxf.degree)
+            self.assertEqual(0, spline.dxf.flags)
+            self.assertFalse(spline.closed)
+            self.assertEqual(
+                [(0.0, 0.0), (100.0, 250.0), (300.0, -150.0), (450.0, 100.0)],
+                [(float(point[0]), float(point[1])) for point in spline.control_points],
+            )
+            self.assertEqual(
+                [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+                [float(knot) for knot in spline.knots],
+            )
+            self.assertEqual(0, spline.fit_point_count())
+            self.assertEqual(0, len(spline.weights))
+
+            manifest = json.loads(output.with_suffix(".manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                result["details"]["verification"]["content_sha256"],
+                manifest["verification"]["content_sha256"],
+            )
+            preview_root = ET.fromstring(
+                output.with_suffix(".preview.svg").read_text(encoding="utf-8")
+            )
+            preview_paths = [
+                element
+                for element in preview_root.iter()
+                if element.tag.rsplit("}", 1)[-1] == "path"
+            ]
+            self.assertEqual(1, len(preview_paths))
+            self.assertEqual("SPLINE", preview_paths[0].get("data-dxf-type"))
 
     @unittest.skipUnless(find_spec("ezdxf"), "ezdxf is not installed")
     def test_confirmed_write_never_overwrites_existing_batch(self) -> None:

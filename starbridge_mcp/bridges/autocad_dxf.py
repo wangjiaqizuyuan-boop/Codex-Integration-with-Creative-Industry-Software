@@ -85,6 +85,7 @@ class AutocadDxfBridge(BaseBridge):
                     "circle",
                     "arc",
                     "ellipse",
+                    "spline",
                     "rectangle",
                     "hatch",
                     "text",
@@ -323,6 +324,19 @@ class AutocadDxfBridge(BaseBridge):
                     end_param=self._canonical_number(entity["end_param"]),
                     extrusion=[0.0, 0.0, 1.0],
                 )
+            elif entity_type == "spline":
+                canonical.update(
+                    type="SPLINE",
+                    control_points=[
+                        self._canonical_point(point) for point in entity["control_points"]
+                    ],
+                    degree=3,
+                    flags=0,
+                    closed=False,
+                    knots=[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+                    weights=[],
+                    fit_points=[],
+                )
             elif entity_type == "hatch":
                 canonical.update(
                     type="HATCH",
@@ -424,6 +438,18 @@ class AutocadDxfBridge(BaseBridge):
                         self._canonical_number(entity.dxf.extrusion.y),
                         self._canonical_number(entity.dxf.extrusion.z),
                     ],
+                )
+            elif entity_type == "SPLINE":
+                canonical.update(
+                    control_points=[
+                        self._canonical_point(point) for point in entity.control_points
+                    ],
+                    degree=int(entity.dxf.degree),
+                    flags=int(entity.dxf.flags),
+                    closed=bool(entity.closed),
+                    knots=[self._canonical_number(knot) for knot in entity.knots],
+                    weights=[self._canonical_number(weight) for weight in entity.weights],
+                    fit_points=[self._canonical_point(point) for point in entity.fit_points],
                 )
             elif entity_type == "HATCH":
                 if len(entity.paths) != 1:
@@ -560,6 +586,12 @@ class AutocadDxfBridge(BaseBridge):
                     end_param=entity["end_param"],
                     dxfattribs=attributes,
                 )
+            elif entity_type == "spline":
+                modelspace.add_open_spline(
+                    entity["control_points"],
+                    degree=3,
+                    dxfattribs=attributes,
+                )
             elif entity_type == "hatch":
                 hatch = modelspace.add_hatch(color=7, dxfattribs=attributes)
                 hatch.paths.add_polyline_path(entity["points"], is_closed=True)
@@ -690,6 +722,7 @@ class AutocadDxfBridge(BaseBridge):
                     "CIRCLE",
                     "ARC",
                     "ELLIPSE",
+                    "SPLINE",
                     "HATCH",
                     "TEXT",
                 }:
@@ -904,6 +937,40 @@ class AutocadDxfBridge(BaseBridge):
                     center_y + major_y * math.cos(param) + major_x * ratio * math.sin(param),
                 ]
                 for param in params
+            ]
+        if entity_type == "spline":
+            control_points = entity["control_points"]
+            params = {0.0, 1.0}
+            for axis in range(2):
+                p0, p1, p2, p3 = [point[axis] for point in control_points]
+                a = -p0 + 3 * p1 - 3 * p2 + p3
+                b = 3 * p0 - 6 * p1 + 3 * p2
+                c = -3 * p0 + 3 * p1
+                quadratic = 3 * a
+                linear = 2 * b
+                if math.isclose(quadratic, 0.0, rel_tol=0.0, abs_tol=1e-12):
+                    if not math.isclose(linear, 0.0, rel_tol=0.0, abs_tol=1e-12):
+                        params.add(-c / linear)
+                else:
+                    discriminant = linear * linear - 4 * quadratic * c
+                    if discriminant >= 0.0:
+                        root = math.sqrt(discriminant)
+                        params.add((-linear - root) / (2 * quadratic))
+                        params.add((-linear + root) / (2 * quadratic))
+
+            def evaluate(param: float, axis: int) -> float:
+                p0, p1, p2, p3 = [point[axis] for point in control_points]
+                inverse = 1.0 - param
+                return (
+                    inverse**3 * p0
+                    + 3 * inverse * inverse * param * p1
+                    + 3 * inverse * param * param * p2
+                    + param**3 * p3
+                )
+
+            return [
+                [evaluate(param, 0), evaluate(param, 1)]
+                for param in sorted(param for param in params if 0.0 <= param <= 1.0)
             ]
         if entity_type == "hatch":
             return list(entity["points"])

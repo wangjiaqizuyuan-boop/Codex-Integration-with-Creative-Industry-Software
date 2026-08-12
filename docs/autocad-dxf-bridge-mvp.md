@@ -37,6 +37,7 @@
 | `circle` | `center`, `radius`, `layer` |
 | `arc` | `center`, `radius`, `start_angle`, `end_angle`, `layer`；可选 `clockwise`，默认 `false` |
 | `ellipse` | `center`, `major_axis`, `ratio`, `layer`；可选 `start_param`、`end_param` |
+| `spline` | `control_points`, `layer`；恰好 4 个控制点的开放三次曲线 |
 | `hatch` | `points`, `layer`；仅单个闭合直线多边形的实心填充 |
 | `rectangle` | `x`, `y`, `width`, `height`, `layer` |
 | `text` | `position`, `value`, `height`, `layer` |
@@ -44,6 +45,8 @@
 `hatch` 当前不接受孔洞、圆弧 bulge、图案、渐变或关联边界；这些需要额外的边界拓扑与回读验证后再开放。
 
 `ellipse` 当前固定在 XY 平面；参数以弧度表示、范围为 0 到 2π，默认 0 到 2π 生成完整椭圆。椭圆弧沿逆时针方向生成，允许 `end_param < start_param` 跨越 0；3D extrusion 暂不开放。
+
+`spline` 当前限定为 XY 平面、4 个控制点、三次、开放、非有理的夹持 B-spline（等价于一段 cubic Bézier）。不接受 fit points、权重、闭合曲线或可变 degree，以保证不同 CAD 应用中的几何和回读证据稳定一致。
 
 ## 可选依赖
 
@@ -67,7 +70,7 @@ python examples\cad\generate_dxf_plan.py `
 ## 后续扩展
 
 1. 把 DXF plan 接入 KORYAO 核心 server，等待核心分支合并后再注册。
-2. 增加更多实体：dimension、mtext，以及带孔或图案的复杂 hatch。
+2. 增加更多实体：dimension、mtext、多段或闭合 spline，以及带孔或图案的复杂 hatch。
 3. 增加 AutoCAD COM 打开 DXF 的可选验证，但默认关闭。
 4. 研究 AutoCAD LT File IPC，不直接依赖窗口焦点。
 5. 增加 DWG 打开验证前的人为确认流程。

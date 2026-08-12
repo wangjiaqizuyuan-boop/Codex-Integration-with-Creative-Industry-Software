@@ -12,6 +12,7 @@ SUPPORTED_ENTITY_TYPES = {
     "circle",
     "arc",
     "ellipse",
+    "spline",
     "rectangle",
     "hatch",
     "text",
@@ -277,6 +278,28 @@ def normalize_entity(entity: Any, index: int) -> tuple[dict[str, Any] | None, li
             sweep = (end_param - start_param) % math.tau
             if not is_full and math.isclose(sweep, 0.0, rel_tol=0.0, abs_tol=1e-9):
                 errors.append(f"entities[{index}] ellipse params must describe a non-zero sweep")
+    elif entity_type == "spline":
+        control_points = entity.get("control_points")
+        if not isinstance(control_points, list) or len(control_points) != 4:
+            errors.append(f"entities[{index}].control_points must contain exactly 4 points")
+        else:
+            normalized_points = []
+            for point_index, raw_point in enumerate(control_points):
+                point, error = _point2(
+                    raw_point, f"entities[{index}].control_points[{point_index}]"
+                )
+                if error:
+                    errors.append(error)
+                else:
+                    range_error = _validate_coordinate_range(
+                        point, f"entities[{index}].control_points[{point_index}]"
+                    )
+                    if range_error:
+                        errors.append(range_error)
+                    normalized_points.append(point)
+            if len({tuple(point) for point in normalized_points}) < 2:
+                errors.append(f"entities[{index}].control_points must describe a non-zero curve")
+            normalized["control_points"] = normalized_points
     elif entity_type == "rectangle":
         for field in ("x", "y"):
             try:
